@@ -91,8 +91,9 @@ def index_path(seed: int, split: str) -> Path:
 def load_split_indices(seed: int):
     import numpy as np
 
-    indices = {}
-    for split in ("train", "val", "test"):
+    all_indices = load_label_indices()
+    indices = {"train": [], "val": [], "test": []}
+    for split in ("val", "test"):
         path = index_path(seed, split)
         if not path.exists():
             raise FileNotFoundError(
@@ -100,7 +101,42 @@ def load_split_indices(seed: int):
                 f"Please place {split}_indices_seed{seed}.npy in {KFOLD_INDEX_DIR}."
             )
         indices[split] = np.load(path).astype(int).tolist()
-    return indices["train"], indices["val"], indices["test"]
+
+    return build_train_from_val_test(seed, all_indices, indices["val"], indices["test"])
+
+
+def load_label_indices():
+    label_indices = sorted(
+        int(path.stem)
+        for path in LABEL_DIR.glob("*.png")
+    )
+    if not label_indices:
+        raise FileNotFoundError(
+            f"No label masks found in {LABEL_DIR}. "
+            "Please place 1-based label masks such as 001.png in data/labels."
+        )
+    return label_indices
+
+
+def build_train_from_val_test(seed: int, all_indices, val_indices, test_indices):
+    """Use all labeled samples except val/test as train samples."""
+    all_set = set(all_indices)
+    test_set = set(test_indices)
+    val_set = set(val_indices)
+
+    missing_val = sorted(val_set - all_set)
+    missing_test = sorted(test_set - all_set)
+    if missing_val:
+        raise ValueError(f"Val indices for seed {seed} not found in labels: {missing_val}")
+    if missing_test:
+        raise ValueError(f"Test indices for seed {seed} not found in labels: {missing_test}")
+
+    val_test_overlap = val_set & test_set
+    if val_test_overlap:
+        raise ValueError(f"Overlap between val and test for seed {seed}: {sorted(val_test_overlap)}")
+
+    train_set = all_set - val_set - test_set
+    return sorted(train_set), sorted(val_set), sorted(test_set)
 
 
 def ensure_data_layout() -> None:

@@ -34,7 +34,8 @@ data/runs/*
 !data/runs/.gitkeep
 data/kfold_indices/*
 !data/kfold_indices/.gitkeep
-!data/kfold_indices/*.npy
+!data/kfold_indices/val_indices_seed*.npy
+!data/kfold_indices/test_indices_seed*.npy
 
 # Logs and temporary files
 *.log
