@@ -1,0 +1,37 @@
+# Python caches
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE/editor files
+.idea/
+.vscode/
+*.swp
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Training artifacts and generated outputs
+checkpoints/
+outputs/
+*.ckpt
+*.pth
+*.pt
+*.onnx
+
+# Local datasets; keep the placeholder README
+data/*
+!data/raw/
+data/raw/*
+!data/raw/README.txt
+
+# Logs and temporary files
+*.log
+tmp/
+temp/
