@@ -8,6 +8,7 @@ import sys
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.append(PROJECT_ROOT)
 import configs.stage1.config_stage1 as conf
+from configs import kfold_config as kfold
 from engine.stage1.normalization_stage1 import*
 from models.model_stage1 import UNet
 
@@ -138,18 +139,33 @@ def predict_dataset(
     return pred_logits_all
 
 
+def predict_one_fold(seed, save_png=True):
+    save_mask_npy_path = kfold.stage1_logits_path(seed)
+    save_prob_npy_path = kfold.stage1_prob_path(seed)
+    save_png_dir = kfold.stage1_png_dir(seed)
+    save_mask_npy_path.parent.mkdir(parents=True, exist_ok=True)
+
+    print(f"\n===== Stage1 predict fold seed {seed} =====")
+    return predict_dataset(
+        model_path=kfold.as_str(kfold.stage1_model_path(seed)),
+        npy_path=conf.NPY_PATH,
+        save_mask_npy_path=kfold.as_str(save_mask_npy_path),
+        save_mask_png_dir=kfold.as_str(save_png_dir) if save_png else None,
+        is_save_prob=conf.IS_SAVE_PROB,
+        save_prob_npy_path=kfold.as_str(save_prob_npy_path),
+        input_channel=INPUT_CHANNEL,
+        batch_size=BATCH_SIZE,
+        device=DEVICE,
+    )
+
+
+def predict_all_folds(save_png=True):
+    for seed in kfold.KFOLD_SEEDS:
+        predict_one_fold(seed, save_png=save_png)
+
+
 # =========================
 # 主程序
 # =========================
 if __name__ == "__main__":
-    pred_masks = predict_dataset(
-        model_path=MODEL_PATH,
-        npy_path=NPY_PATH,
-        save_mask_npy_path=SAVE_MASK_NPY_PATH,
-        save_mask_png_dir=SAVE_MASK_PNG_DIR if SAVE_PNG else None,
-        is_save_prob=conf.IS_SAVE_PROB,
-        save_prob_npy_path=conf.SAVE_PROB_NPY_PATH,
-        input_channel=INPUT_CHANNEL,
-        batch_size=BATCH_SIZE,
-        device=DEVICE
-    )
+    predict_all_folds(save_png=SAVE_PNG)

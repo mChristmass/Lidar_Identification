@@ -4,25 +4,29 @@ import random
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+
 import cv2
 import numpy as np
 import torch
 
+from configs import kfold_config as kfold
+from scripts.kfold_utils import tee_stdout
 
 SEED = 42
 
 CONFIG = {
     "raw_items": {
-        "intensity": r"D:\myComputer\pointsCloud\data\identification\data\intensity.npy",
-        "depth": r"D:\myComputer\pointsCloud\data\identification\data\depth.npy",
-        "depth_edge": r"D:\myComputer\pointsCloud\data\identification\data\depth_edge.npy",
-        "prob":r"D:\myComputer\pointsCloud\data\identification\data\ROI\dif__indices\3407\change_loss\coarse_masks\prob.npy"
+        "intensity": kfold.as_str(kfold.RAW_ITEMS["intensity"]),
+        "depth": kfold.as_str(kfold.RAW_ITEMS["depth"]),
+        "depth_edge": kfold.as_str(kfold.RAW_ITEMS["depth_edge"]),
+        "prob": kfold.as_str(kfold.stage1_prob_path(3407)),
     },
-    "stage1_logits_npy": r"D:\myComputer\pointsCloud\data\identification\data\ROI\dif__indices\3407\change_loss\coarse_masks\coarse_masks.npy",
-    "mask_dir": r"D:\myComputer\pointsCloud\data\identification\data\label\new",
-    "test_index_path": r"D:\myComputer\pointsCloud\data\identification\data\ROI\dif__indices\3407\test_indices_seed3407.npy",
-    "val_index_path": r"D:\myComputer\pointsCloud\data\identification\data\ROI\dif__indices\3407\val_indices_seed3407.npy",
-    "save_root": r"D:\myComputer\pointsCloud\data\identification\data\ROI\dif__indices\3407\change_loss\ROI",
+    "stage1_logits_npy": kfold.as_str(kfold.stage1_logits_path(3407)),
+    "mask_dir": kfold.as_str(kfold.LABEL_DIR),
+    "test_index_path": kfold.as_str(kfold.index_path(3407, "test")),
+    "val_index_path": kfold.as_str(kfold.index_path(3407, "val")),
+    "save_root": kfold.as_str(kfold.stage2_roi_root(3407)),
     "selected_items": [
         "depth",
         "depth_edge",
@@ -454,5 +458,58 @@ def main() -> None:
     build_rois_for_indices(test_indices, "test", raw_arrays, logits_all, CONFIG)
 
 
+def make_fold_config(seed: int) -> Dict:
+    cfg = dict(CONFIG)
+    cfg["raw_items"] = {
+        "intensity": kfold.as_str(kfold.RAW_ITEMS["intensity"]),
+        "depth": kfold.as_str(kfold.RAW_ITEMS["depth"]),
+        "depth_edge": kfold.as_str(kfold.RAW_ITEMS["depth_edge"]),
+        "prob": kfold.as_str(kfold.stage1_prob_path(seed)),
+    }
+    cfg["stage1_logits_npy"] = kfold.as_str(kfold.stage1_logits_path(seed))
+    cfg["mask_dir"] = kfold.as_str(kfold.LABEL_DIR)
+    cfg["save_root"] = kfold.as_str(kfold.stage2_roi_root(seed))
+    cfg["test_index_path"] = kfold.as_str(kfold.index_path(seed, "test"))
+    cfg["val_index_path"] = kfold.as_str(kfold.index_path(seed, "val"))
+    return cfg
+
+
+def to_zero_based(indices: List[int]) -> List[int]:
+    return [int(idx) - 1 for idx in indices]
+
+
+def build_one_fold(seed: int) -> None:
+    cfg = make_fold_config(seed)
+    log_path = kfold.stage2_dir(seed) / "build_stage2_rois.log"
+    with tee_stdout(log_path):
+        print(f"\n===== Build stage2 ROIs fold seed {seed} =====")
+        validate_config(cfg)
+
+        train_indices, val_indices, test_indices = kfold.load_split_indices(seed)
+        train_indices = to_zero_based(train_indices)
+        val_indices = to_zero_based(val_indices)
+        test_indices = to_zero_based(test_indices)
+        print(f"train={len(train_indices)}, val={len(val_indices)}, test={len(test_indices)}")
+
+        raw_arrays = load_raw_item_arrays(cfg)
+        logits_all = np.load(cfg["stage1_logits_npy"]).astype(np.float32)
+
+        if logits_all.ndim != 4 or logits_all.shape[1] != 2:
+            raise ValueError(f"logits shape should be [N,2,H,W], got {logits_all.shape}")
+
+        sample_count = next(iter(raw_arrays.values())).shape[0]
+        if logits_all.shape[0] != sample_count:
+            raise ValueError("Sample count mismatch between raw arrays and stage1 logits.")
+
+        build_rois_for_indices(train_indices, "train", raw_arrays, logits_all, cfg)
+        build_rois_for_indices(val_indices, "val", raw_arrays, logits_all, cfg)
+        build_rois_for_indices(test_indices, "test", raw_arrays, logits_all, cfg)
+
+
+def build_all_folds() -> None:
+    for seed in kfold.KFOLD_SEEDS:
+        build_one_fold(seed)
+
+
 if __name__ == "__main__":
-    main()
+    build_all_folds()

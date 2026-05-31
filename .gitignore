@@ -25,11 +25,16 @@ outputs/
 *.pt
 *.onnx
 
-# Local datasets; keep the placeholder README
-data/*
-!data/raw/
+# Local datasets and experiment outputs
 data/raw/*
 !data/raw/README.txt
+data/labels/*
+!data/labels/.gitkeep
+data/runs/*
+!data/runs/.gitkeep
+data/kfold_indices/*
+!data/kfold_indices/.gitkeep
+!data/kfold_indices/*.npy
 
 # Logs and temporary files
 *.log

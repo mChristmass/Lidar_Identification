@@ -1,28 +1,24 @@
 import torch
 
-# ----------- train参数 -----------
-TRAIN_PATH = r"D:\myComputer\pointsCloud\data\identification\data\ROI\dif__indices\42\+probability\ROI\roi_train"
-VAL_PATH = r"D:\myComputer\pointsCloud\data\identification\data\ROI\dif__indices\42\+probability\ROI\roi_val"
-TEST_PATH = r"D:\myComputer\pointsCloud\data\identification\data\ROI\dif__indices\42\+probability\ROI\roi_test"
-
-MASK_DIR = r"D:\myComputer\pointsCloud\data\identification\data\label\new"
-# 模型路径
-SAVE_PATH = r"D:\myComputer\pointsCloud\data\identification\data\ROI\dif__indices\42\+probability\stage2_unet42+logits.pth"
-# 可视化保存路径
-TEST_VIS_PATH = r"D:\myComputer\pointsCloud\data\identification\data\ROI\dif__indices\42\+probability\Final_mask"
-# 原始intensity图
-RAW_INTENSITY_PATH = r"D:\myComputer\pointsCloud\data\identification\data\intensity.npy"
+from configs import kfold_config as kfold
 
 
-# ----------- 参数 -----------
-INPUT_ITEMS = ["intensity", "depth", "depth_edge", "prob"]
+# ----------- train paths -----------
+TRAIN_PATH = kfold.as_str(kfold.stage2_roi_root(42) / "roi_train")
+VAL_PATH = kfold.as_str(kfold.stage2_roi_root(42) / "roi_val")
+TEST_PATH = kfold.as_str(kfold.stage2_roi_root(42) / "roi_test")
+
+MASK_DIR = kfold.as_str(kfold.LABEL_DIR)
+SAVE_PATH = kfold.as_str(kfold.stage2_model_path(42))
+TEST_VIS_PATH = kfold.as_str(kfold.stage2_vis_dir(42))
+RAW_INTENSITY_PATH = kfold.as_str(kfold.RAW_ITEMS["intensity"])
+
+# ----------- parameters -----------
+INPUT_ITEMS = kfold.STAGE2_INPUT_ITEMS
 INPUT_CHANNEL = len(INPUT_ITEMS)
-ROI_size = [128, 128]
+ROI_size = list(kfold.ROI_SIZE)
 
 BATCH_SIZE = 8
 EPOCHS = 50
 LR = 1e-3
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-# 类别权重
-
-# 可视化
