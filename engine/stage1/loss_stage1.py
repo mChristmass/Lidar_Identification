@@ -96,9 +96,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-class SoftDiceLoss(nn.Module):
-    def __init__(self, smooth=1e-6):
+class TverskyLoss(nn.Module):
+    def __init__(self, alpha=0.35, beta=0.65, smooth=1e-6):
         super().__init__()
+        self.alpha = alpha
+        self.beta = beta
         self.smooth = smooth
 
     def forward(self, logits, labels, valid_mask=None):
@@ -116,18 +118,19 @@ class SoftDiceLoss(nn.Module):
             probs = probs * valid_mask
             labels = labels * valid_mask
 
-        intersection = (probs * labels).sum(dim=(1, 2))
-        union = probs.sum(dim=(1, 2)) + labels.sum(dim=(1, 2))
+        tp = (probs * labels).sum(dim=(1, 2))
+        fp = (probs * (1.0 - labels)).sum(dim=(1, 2))
+        fn = ((1.0 - probs) * labels).sum(dim=(1, 2))
 
-        dice = (2.0 * intersection + self.smooth) / (union + self.smooth)
+        tversky = (tp + self.smooth) / (tp + self.alpha * fp + self.beta * fn + self.smooth)
 
-        return 1.0 - dice.mean()
+        return 1.0 - tversky.mean()
 
 
 class SegmentationLoss(nn.Module):
     """
     Recommended Stage1 loss:
-    Weighted CE + 0.5 * Dice
+    Weighted CE + Tversky
 
     Stage1 target:
     - keep high recall
@@ -138,7 +141,9 @@ class SegmentationLoss(nn.Module):
         self,
         target_weight=5.0,
         ce_weight=1.0,
-        dice_weight=0.5
+        tversky_weight=0.5,
+        tversky_alpha=0.35,
+        tversky_beta=0.65
     ):
         super().__init__()
 
@@ -150,10 +155,10 @@ class SegmentationLoss(nn.Module):
             reduction="none"
         )
 
-        self.dice = SoftDiceLoss()
+        self.tversky = TverskyLoss(alpha=tversky_alpha, beta=tversky_beta)
 
         self.ce_weight = ce_weight
-        self.dice_weight = dice_weight
+        self.tversky_weight = tversky_weight
 
     def forward(self, logits, labels, valid_mask=None):
         """
@@ -171,8 +176,8 @@ class SegmentationLoss(nn.Module):
         else:
             ce_loss = ce_loss.mean()
 
-        dice_loss = self.dice(logits, labels, valid_mask)
+        tversky_loss = self.tversky(logits, labels, valid_mask)
 
-        loss = self.ce_weight * ce_loss + self.dice_weight * dice_loss
+        loss = self.ce_weight * ce_loss + self.tversky_weight * tversky_loss
 
         return loss

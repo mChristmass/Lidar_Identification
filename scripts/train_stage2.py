@@ -16,6 +16,7 @@ sys.path.append(PROJECT_ROOT)
 import configs.stage2.config_stage2 as conf
 from configs import kfold_config as kfold
 from datasets.dataset_stage2 import Stage2Dataset
+from engine.stage2.loss_stage2 import Stage2Loss
 from models.model_stage2 import Stage2UNet
 from scripts.kfold_utils import print_summary, save_json, set_seed, summarize_metrics, tee_stdout
 
@@ -213,7 +214,11 @@ def train_one_fold(seed, paths=None):
 
         model = Stage2UNet().to(DEVICE)
         optimizer = torch.optim.Adam(model.parameters(), lr=conf.LR)
-        criterion = torch.nn.CrossEntropyLoss()
+        criterion = Stage2Loss(
+            target_weight=conf.TARGET_WEIGHT,
+            ce_weight=conf.CE_WEIGHT,
+            dice_weight=conf.DICE_WEIGHT,
+        ).to(DEVICE)
 
         best_iou = -1.0
         for epoch in range(conf.EPOCHS):
