@@ -217,7 +217,9 @@ def train_one_fold(seed, paths=None):
         criterion = Stage2Loss(
             target_weight=conf.TARGET_WEIGHT,
             ce_weight=conf.CE_WEIGHT,
-            dice_weight=conf.DICE_WEIGHT,
+            tversky_weight=conf.TVERSKY_WEIGHT,
+            tversky_alpha=conf.TVERSKY_ALPHA,
+            tversky_beta=conf.TVERSKY_BETA,
         ).to(DEVICE)
 
         best_iou = -1.0

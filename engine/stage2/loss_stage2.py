@@ -2,9 +2,11 @@ import torch
 import torch.nn as nn
 
 
-class SoftDiceLoss(nn.Module):
-    def __init__(self, smooth=1e-6):
+class TverskyLoss(nn.Module):
+    def __init__(self, alpha=0.30, beta=0.70, smooth=1e-6):
         super().__init__()
+        self.alpha = alpha
+        self.beta = beta
         self.smooth = smooth
 
     def forward(self, logits, labels, valid_mask=None):
@@ -22,30 +24,33 @@ class SoftDiceLoss(nn.Module):
             probs = probs * valid_mask
             labels = labels * valid_mask
 
-        intersection = (probs * labels).sum(dim=(1, 2))
-        union = probs.sum(dim=(1, 2)) + labels.sum(dim=(1, 2))
+        tp = (probs * labels).sum(dim=(1, 2))
+        fp = (probs * (1.0 - labels)).sum(dim=(1, 2))
+        fn = ((1.0 - probs) * labels).sum(dim=(1, 2))
 
-        dice = (2 * intersection + self.smooth) / (union + self.smooth)
+        tversky = (tp + self.smooth) / (tp + self.alpha * fp + self.beta * fn + self.smooth)
 
-        return 1 - dice.mean()
+        return 1 - tversky.mean()
 
 
 class Stage2Loss(nn.Module):
     """
     Recommended Stage2 loss:
-    Weighted CE + Dice
+    Weighted CE + Tversky
 
     Stage2 target:
-    - suppress false positives
-    - keep recall
+    - keep recall during refinement
+    - suppress false positives without over-shrinking the target
     - improve region overlap
     """
 
     def __init__(
         self,
-        target_weight=2.0,
+        target_weight=3.0,
         ce_weight=1.0,
-        dice_weight=1.0
+        tversky_weight=1.0,
+        tversky_alpha=0.30,
+        tversky_beta=0.70
     ):
         super().__init__()
 
@@ -57,10 +62,10 @@ class Stage2Loss(nn.Module):
             reduction="none"
         )
 
-        self.dice = SoftDiceLoss()
+        self.tversky = TverskyLoss(alpha=tversky_alpha, beta=tversky_beta)
 
         self.ce_weight = ce_weight
-        self.dice_weight = dice_weight
+        self.tversky_weight = tversky_weight
 
     def forward(self, logits, labels, valid_mask=None):
         """
@@ -77,8 +82,8 @@ class Stage2Loss(nn.Module):
         else:
             ce_loss = ce_loss.mean()
 
-        dice_loss = self.dice(logits, labels, valid_mask)
+        tversky_loss = self.tversky(logits, labels, valid_mask)
 
-        total_loss = self.ce_weight * ce_loss + self.dice_weight * dice_loss
+        total_loss = self.ce_weight * ce_loss + self.tversky_weight * tversky_loss
 
         return total_loss
