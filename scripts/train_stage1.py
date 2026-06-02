@@ -148,15 +148,18 @@ def train_one_fold(seed, train_indices, val_indices, test_indices, paths=None):
 
         model = UNet(in_channels=conf.INPUT_CHANNEL, num_classes=2).to(conf.DEVICE)
         criterion = SegmentationLoss(
+            loss_type=conf.LOSS_TYPE,
             target_weight=conf.TARGET_WEIGHT,
             ce_weight=conf.CE_WEIGHT,
+            dice_weight=conf.DICE_WEIGHT,
             tversky_weight=conf.TVERSKY_WEIGHT,
             tversky_alpha=conf.TVERSKY_ALPHA,
             tversky_beta=conf.TVERSKY_BETA,
         ).to(conf.DEVICE)
         optimizer = optim.Adam(model.parameters(), lr=conf.LR)
 
-        best_val_fbeta = -1.0
+        best_metric_name = conf.BEST_MODEL_METRIC
+        best_metric_value = -1.0
         for epoch in range(conf.EPOCHS):
             model.train()
             epoch_loss = 0.0
@@ -185,10 +188,13 @@ def train_one_fold(seed, train_indices, val_indices, test_indices, paths=None):
                 f"Val pred_area: {val_metrics['pred_area']:.3f}"
             )
 
-            if val_metrics["fbeta"] > best_val_fbeta:
-                best_val_fbeta = val_metrics["fbeta"]
+            if best_metric_name not in val_metrics:
+                raise ValueError(f"Unsupported BEST_MODEL_METRIC: {best_metric_name}")
+
+            if val_metrics[best_metric_name] > best_metric_value:
+                best_metric_value = val_metrics[best_metric_name]
                 torch.save(model.state_dict(), paths["save_path"])
-                print(f"Best model saved. Val F{conf.FBETA_BETA:g} = {best_val_fbeta:.3f}")
+                print(f"Best model saved. Val {best_metric_name} = {best_metric_value:.3f}")
 
         print("\nLoading best model for final test evaluation...")
         model.load_state_dict(torch.load(paths["save_path"], map_location=conf.DEVICE))
@@ -206,7 +212,13 @@ def train_one_fold(seed, train_indices, val_indices, test_indices, paths=None):
 
         visualize_test_samples(model, test_loader, paths["vis_dir"], conf.DEVICE, conf.VISUALIZE_NUM)
 
-        result = {"seed": seed, **test_metrics, "best_val_fbeta": best_val_fbeta}
+        result = {
+            "seed": seed,
+            **test_metrics,
+            "loss_type": conf.LOSS_TYPE,
+            "best_model_metric": best_metric_name,
+            f"best_val_{best_metric_name}": best_metric_value,
+        }
         save_json(paths["metrics_path"], result)
         print(f"\nTraining finished. Best model saved to:\n{paths['save_path']}")
         return result

@@ -16,11 +16,14 @@ INPUT_CHANNEL = kfold.STAGE1_INPUT_CHANNEL
 BATCH_SIZE = 4
 EPOCHS = 30
 LR = 1e-3
-EVALUATE_threshold = 0.30
+EVALUATE_threshold = 0.1
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+LOSS_TYPE = "ce_dice"
+BEST_MODEL_METRIC = "recall"
 TARGET_WEIGHT = 5.0
 CE_WEIGHT = 1.0
+DICE_WEIGHT = 0.5
 TVERSKY_WEIGHT = 0.5
 TVERSKY_ALPHA = 0.35
 TVERSKY_BETA = 0.65
