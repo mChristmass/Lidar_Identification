@@ -9,7 +9,7 @@ DATA_ROOT = PROJECT_ROOT / "data"
 RAW_DIR = DATA_ROOT / "raw"
 LABEL_DIR = DATA_ROOT / "labels"
 KFOLD_INDEX_DIR = DATA_ROOT / "kfold_indices"
-RUNS_DIR = DATA_ROOT / "runs"
+RUNS_DIR = DATA_ROOT / "runs/run4"
 
 KFOLD_SEEDS = [42, 777, 2025, 3407, 114514]
 
@@ -22,7 +22,7 @@ RAW_ITEMS = {
 STAGE1_INPUT_ITEM = "intensity"
 STAGE1_INPUT_CHANNEL = 1
 
-STAGE2_INPUT_ITEMS = ["intensity", "depth", "depth_edge", "prob"]
+STAGE2_INPUT_ITEMS = ["intensity", "depth", "depth_edge", "prob"]  #["intensity", "depth", "depth_edge", "prob"]
 ROI_SIZE = (128, 128)
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")

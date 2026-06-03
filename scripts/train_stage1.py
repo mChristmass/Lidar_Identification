@@ -39,14 +39,10 @@ def compute_stage1_metrics(logits, labels, threshold=0.3, valid_mask=None):
     precision = (intersection / (pred_sum + 1e-6)).mean().item()
     recall = (intersection / (label_sum + 1e-6)).mean().item()
     pred_area = pred_sum.mean().item()
-    beta = conf.FBETA_BETA
-    fbeta = ((1.0 + beta ** 2) * precision * recall) / ((beta ** 2) * precision + recall + 1e-6)
-
     return {
         "iou": iou,
         "precision": precision,
         "recall": recall,
-        "fbeta": fbeta,
         "coverage": recall,
         "pred_area": pred_area,
     }
@@ -54,7 +50,7 @@ def compute_stage1_metrics(logits, labels, threshold=0.3, valid_mask=None):
 
 def evaluate(model, loader, device, threshold=0.3):
     model.eval()
-    totals = {"iou": 0.0, "precision": 0.0, "recall": 0.0, "fbeta": 0.0, "coverage": 0.0, "pred_area": 0.0}
+    totals = {"iou": 0.0, "precision": 0.0, "recall": 0.0, "coverage": 0.0, "pred_area": 0.0}
     n = 0
 
     with torch.no_grad():
@@ -148,18 +144,13 @@ def train_one_fold(seed, train_indices, val_indices, test_indices, paths=None):
 
         model = UNet(in_channels=conf.INPUT_CHANNEL, num_classes=2).to(conf.DEVICE)
         criterion = SegmentationLoss(
-            loss_type=conf.LOSS_TYPE,
             target_weight=conf.TARGET_WEIGHT,
             ce_weight=conf.CE_WEIGHT,
             dice_weight=conf.DICE_WEIGHT,
-            tversky_weight=conf.TVERSKY_WEIGHT,
-            tversky_alpha=conf.TVERSKY_ALPHA,
-            tversky_beta=conf.TVERSKY_BETA,
         ).to(conf.DEVICE)
         optimizer = optim.Adam(model.parameters(), lr=conf.LR)
 
-        best_metric_name = conf.BEST_MODEL_METRIC
-        best_metric_value = -1.0
+        best_val_recall = -1.0
         for epoch in range(conf.EPOCHS):
             model.train()
             epoch_loss = 0.0
@@ -183,18 +174,14 @@ def train_one_fold(seed, train_indices, val_indices, test_indices, paths=None):
                 f"Val IoU: {val_metrics['iou']:.3f}  "
                 f"Val Precision: {val_metrics['precision']:.3f}  "
                 f"Val Recall: {val_metrics['recall']:.3f}  "
-                f"Val F{conf.FBETA_BETA:g}: {val_metrics['fbeta']:.3f}  "
                 f"Val coverage: {val_metrics['coverage']:.3f}  "
                 f"Val pred_area: {val_metrics['pred_area']:.3f}"
             )
 
-            if best_metric_name not in val_metrics:
-                raise ValueError(f"Unsupported BEST_MODEL_METRIC: {best_metric_name}")
-
-            if val_metrics[best_metric_name] > best_metric_value:
-                best_metric_value = val_metrics[best_metric_name]
+            if val_metrics["recall"] > best_val_recall:
+                best_val_recall = val_metrics["recall"]
                 torch.save(model.state_dict(), paths["save_path"])
-                print(f"Best model saved. Val {best_metric_name} = {best_metric_value:.3f}")
+                print(f"Best model saved. Val Recall = {best_val_recall:.3f}")
 
         print("\nLoading best model for final test evaluation...")
         model.load_state_dict(torch.load(paths["save_path"], map_location=conf.DEVICE))
@@ -205,7 +192,6 @@ def train_one_fold(seed, train_indices, val_indices, test_indices, paths=None):
             f"Test IoU: {test_metrics['iou']:.3f}  "
             f"Test Precision: {test_metrics['precision']:.3f}  "
             f"Test Recall: {test_metrics['recall']:.3f}  "
-            f"Test F{conf.FBETA_BETA:g}: {test_metrics['fbeta']:.3f}  "
             f"Test coverage: {test_metrics['coverage']:.3f}  "
             f"Test pred_area: {test_metrics['pred_area']:.3f}"
         )
@@ -215,9 +201,7 @@ def train_one_fold(seed, train_indices, val_indices, test_indices, paths=None):
         result = {
             "seed": seed,
             **test_metrics,
-            "loss_type": conf.LOSS_TYPE,
-            "best_model_metric": best_metric_name,
-            f"best_val_{best_metric_name}": best_metric_value,
+            "best_val_recall": best_val_recall,
         }
         save_json(paths["metrics_path"], result)
         print(f"\nTraining finished. Best model saved to:\n{paths['save_path']}")
@@ -244,9 +228,9 @@ def train_all_folds():
             )
         )
 
-    summary = summarize_metrics(results, ["iou", "precision", "recall", "fbeta", "coverage", "pred_area"])
+    summary = summarize_metrics(results, ["iou", "precision", "recall", "coverage", "pred_area"])
     save_json(kfold.RUNS_DIR / "summary_stage1.json", summary)
-    print_summary("Stage1 K-Fold Summary", summary, ["iou", "precision", "recall", "fbeta", "coverage", "pred_area"])
+    print_summary("Stage1 K-Fold Summary", summary, ["iou", "precision", "recall", "coverage", "pred_area"])
     return summary
 
 

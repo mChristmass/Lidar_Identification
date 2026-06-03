@@ -214,13 +214,14 @@ def train_one_fold(seed, paths=None):
 
         model = Stage2UNet().to(DEVICE)
         optimizer = torch.optim.Adam(model.parameters(), lr=conf.LR)
-        criterion = Stage2Loss(
-            target_weight=conf.TARGET_WEIGHT,
-            ce_weight=conf.CE_WEIGHT,
-            tversky_weight=conf.TVERSKY_WEIGHT,
-            tversky_alpha=conf.TVERSKY_ALPHA,
-            tversky_beta=conf.TVERSKY_BETA,
-        ).to(DEVICE)
+        # criterion = Stage2Loss(
+        #     target_weight=conf.TARGET_WEIGHT,
+        #     ce_weight=conf.CE_WEIGHT,
+        #     tversky_weight=conf.TVERSKY_WEIGHT,
+        #     tversky_alpha=conf.TVERSKY_ALPHA,
+        #     tversky_beta=conf.TVERSKY_BETA,
+        # ).to(DEVICE)
+        criterion = torch.nn.CrossEntropyLoss()
 
         best_iou = -1.0
         for epoch in range(conf.EPOCHS):
