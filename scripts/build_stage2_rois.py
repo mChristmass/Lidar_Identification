@@ -34,6 +34,9 @@ CONFIG = {
         "intensity",
         "prob"
     ],
+    # "pred": use Stage1 prediction to crop ROI.
+    # "oracle": use GT mask to crop ROI for upper-bound diagnosis.
+    "roi_source": "oracle", #"pred", "oracle"
     # split 比例
     "test_ratio": 0.1,
     "val_ratio": 0.1,  # 从非 test 的剩余数据里再划 val
@@ -253,7 +256,16 @@ def build_single_roi(
     height, width = reference.shape
 
     fg_prob = logits_to_fg_prob(logits)
-    coarse_mask = prob_to_mask(fg_prob, cfg["threshold"])
+    roi_source = cfg.get("roi_source", "pred")
+
+    if roi_source == "oracle":
+        if gt_mask is None:
+            raise ValueError("Oracle ROI requires gt_mask.")
+        coarse_mask = gt_mask.astype(np.uint8)
+    elif roi_source == "pred":
+        coarse_mask = prob_to_mask(fg_prob, cfg["threshold"])
+    else:
+        raise ValueError(f"Unsupported roi_source: {roi_source}")
 
     best, labels = get_main_component(
         coarse_mask,
@@ -310,6 +322,7 @@ def build_single_roi(
             "component_area": int(best["area"]),
             "component_area_ratio": float(best["area_ratio"]),
             "threshold": float(cfg["threshold"]),
+            "roi_source": roi_source,
             "margin": int(cfg["margin"]),
             "roi_size": list(cfg["roi_size"]),
             "resize_meta": resize_meta,
@@ -384,7 +397,7 @@ def build_rois_for_indices(
 
 
         gt_mask = None
-        if split_name in {"train", "val"}:
+        if cfg.get("roi_source", "pred") == "oracle" or split_name in {"train", "val"}:
             gt_mask = read_mask_png(cfg["mask_dir"], frame_idx)
 
         # # 不再判断 split_name，所有模式都尝试读取 GT
