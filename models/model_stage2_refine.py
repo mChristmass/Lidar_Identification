@@ -19,7 +19,7 @@ class DoubleConv(nn.Module):
 
 
 class Stage2RefineUNet(nn.Module):
-    def __init__(self, in_channels, num_classes=2, base_ch=32):
+    def __init__(self, in_channels, num_classes=2, base_ch=32, zero_init_head=True):
         super().__init__()
         self.enc1 = DoubleConv(in_channels, base_ch)
         self.enc2 = DoubleConv(base_ch, base_ch * 2)
@@ -39,6 +39,9 @@ class Stage2RefineUNet(nn.Module):
         self.dec1 = DoubleConv(base_ch * 2, base_ch)
 
         self.out_conv = nn.Conv2d(base_ch, num_classes, 1)
+        if zero_init_head:
+            nn.init.zeros_(self.out_conv.weight)
+            nn.init.zeros_(self.out_conv.bias)
 
     def forward(self, x):
         e1 = self.enc1(x)

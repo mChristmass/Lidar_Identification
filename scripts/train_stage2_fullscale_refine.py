@@ -1,4 +1,5 @@
 import argparse
+import json
 import os
 import sys
 from pathlib import Path
@@ -17,7 +18,7 @@ sys.path.append(PROJECT_ROOT)
 import configs.stage2_fullscale.config_stage2_fullscale as conf
 from configs import kfold_config as kfold
 from datasets.dataset_stage2_fullscale import Stage2FullScaleDataset
-from engine.stage1.loss_stage1 import SegmentationLoss
+from engine.stage2.loss_refine import ErrorFocusedRefineLoss
 from models.model_stage2_refine import Stage2RefineUNet
 from scripts.kfold_utils import print_summary, save_json, set_seed, summarize_metrics, tee_stdout
 
@@ -50,6 +51,13 @@ def metrics_from_counts(tp, fp, fn, pred_area, label_area):
     }
 
 
+def refine_logits(model, x, base_logits, roi_mask):
+    delta_logits = model(x)
+    if conf.GATE_RESIDUAL_WITH_ROI:
+        delta_logits = delta_logits * roi_mask.unsqueeze(1)
+    return base_logits + delta_logits, delta_logits
+
+
 def evaluate_thresholds(model, loader, device, thresholds):
     model.eval()
     totals = {
@@ -58,11 +66,12 @@ def evaluate_thresholds(model, loader, device, thresholds):
     }
 
     with torch.no_grad():
-        for x, y, base_logits, _, _ in loader:
+        for x, y, base_logits, roi_mask, _ in loader:
             x = x.to(device)
             y = y.to(device)
             base_logits = base_logits.to(device)
-            final_logits = base_logits + model(x)
+            roi_mask = roi_mask.to(device)
+            final_logits, _ = refine_logits(model, x, base_logits, roi_mask)
             for threshold in totals:
                 tp, fp, fn, pred_area, label_area = compute_metrics_from_logits(final_logits, y, threshold)
                 totals[threshold]["tp"] += tp
@@ -100,12 +109,54 @@ def make_dataset(indices, prior_dir):
     )
 
 
-def compute_refine_loss(final_logits, labels, roi_mask, criterion):
-    full_loss = criterion(final_logits, labels)
-    if conf.ROI_LOSS_WEIGHT <= 0:
-        return full_loss
-    roi_loss = criterion(final_logits, labels, valid_mask=roi_mask)
-    return full_loss + conf.ROI_LOSS_WEIGHT * roi_loss
+def load_prior_threshold(prior_dir):
+    meta_path = Path(prior_dir) / "meta.json"
+    with meta_path.open("r", encoding="utf-8") as handle:
+        return float(json.load(handle)["threshold"])
+
+
+def diagnose_refinement(model, loader, device, threshold):
+    totals = {
+        "changed_pixels": 0,
+        "repaired_pixels": 0,
+        "repaired_fn": 0,
+        "repaired_fp": 0,
+        "damaged_pixels": 0,
+        "damaged_tp": 0,
+        "damaged_tn": 0,
+        "changed_inside_roi": 0,
+        "changed_outside_roi": 0,
+    }
+
+    model.eval()
+    with torch.no_grad():
+        for x, y, base_logits, roi_mask, _ in loader:
+            x = x.to(device)
+            y = y.to(device).bool()
+            base_logits = base_logits.to(device)
+            roi_mask = roi_mask.to(device).bool()
+            final_logits, _ = refine_logits(model, x, base_logits, roi_mask.float())
+
+            base_pred = torch.softmax(base_logits, dim=1)[:, 1] > threshold
+            final_pred = torch.softmax(final_logits, dim=1)[:, 1] > threshold
+            changed = base_pred != final_pred
+            base_correct = base_pred == y
+            final_correct = final_pred == y
+
+            repaired = (~base_correct) & final_correct
+            damaged = base_correct & (~final_correct)
+            totals["changed_pixels"] += int(changed.sum().item())
+            totals["repaired_pixels"] += int(repaired.sum().item())
+            totals["repaired_fn"] += int((repaired & y).sum().item())
+            totals["repaired_fp"] += int((repaired & ~y).sum().item())
+            totals["damaged_pixels"] += int(damaged.sum().item())
+            totals["damaged_tp"] += int((damaged & y).sum().item())
+            totals["damaged_tn"] += int((damaged & ~y).sum().item())
+            totals["changed_inside_roi"] += int((changed & roi_mask).sum().item())
+            totals["changed_outside_roi"] += int((changed & ~roi_mask).sum().item())
+
+    totals["net_repaired_pixels"] = totals["repaired_pixels"] - totals["damaged_pixels"]
+    return totals
 
 
 def visualize_predictions(model, loader, device, threshold, out_dir, max_count=8):
@@ -118,8 +169,9 @@ def visualize_predictions(model, loader, device, threshold, out_dir, max_count=8
         for x, y, base_logits, roi_mask, label_indices in loader:
             x = x.to(device)
             base_logits = base_logits.to(device)
-            final_logits = base_logits + model(x)
-            stage1_pred = torch.argmax(base_logits, dim=1).cpu().numpy()
+            roi_mask_device = roi_mask.to(device)
+            final_logits, _ = refine_logits(model, x, base_logits, roi_mask_device)
+            stage1_pred = (torch.softmax(base_logits, dim=1)[:, 1] > threshold).long().cpu().numpy()
             final_pred = (torch.softmax(final_logits, dim=1)[:, 1] > threshold).long().cpu().numpy()
             x_np = x.cpu().numpy()
             y_np = y.numpy()
@@ -151,7 +203,7 @@ def train_one_fold(seed, args):
     train_indices, val_indices, test_indices = kfold.load_split_indices(seed)
     fold_dir = Path(args.runs_dir) / kfold.fold_name(seed)
     prior_dir = fold_dir / "stage1_strong_priors"
-    out_dir = fold_dir / "stage2_fullscale_refine"
+    out_dir = fold_dir / args.output_name
     out_dir.mkdir(parents=True, exist_ok=True)
 
     with tee_stdout(out_dir / "train.log"):
@@ -161,16 +213,25 @@ def train_one_fold(seed, args):
         print(f"Test samples : {len(test_indices)}")
         print(f"Prior dir    : {prior_dir}")
         print(f"Input items  : {conf.INPUT_ITEMS}")
+        base_threshold = load_prior_threshold(prior_dir)
+        print(f"Stage1 threshold: {base_threshold:g}")
 
         train_loader = DataLoader(make_dataset(train_indices, prior_dir), batch_size=args.batch_size, shuffle=True)
         val_loader = DataLoader(make_dataset(val_indices, prior_dir), batch_size=args.batch_size, shuffle=False)
         test_loader = DataLoader(make_dataset(test_indices, prior_dir), batch_size=args.batch_size, shuffle=False)
 
-        model = Stage2RefineUNet(in_channels=conf.INPUT_CHANNEL, num_classes=2).to(conf.DEVICE)
-        criterion = SegmentationLoss(
+        model = Stage2RefineUNet(
+            in_channels=conf.INPUT_CHANNEL,
+            num_classes=2,
+            zero_init_head=conf.ZERO_INIT_RESIDUAL_HEAD,
+        ).to(conf.DEVICE)
+        criterion = ErrorFocusedRefineLoss(
             target_weight=conf.TARGET_WEIGHT,
             ce_weight=conf.CE_WEIGHT,
             dice_weight=conf.DICE_WEIGHT,
+            error_pixel_weight=conf.ERROR_PIXEL_WEIGHT,
+            correct_pixel_weight=conf.CORRECT_PIXEL_WEIGHT,
+            correct_delta_reg_weight=conf.CORRECT_DELTA_REG_WEIGHT,
         ).to(conf.DEVICE)
         optimizer = optim.Adam(model.parameters(), lr=args.lr)
 
@@ -189,8 +250,15 @@ def train_one_fold(seed, args):
                 base_logits = base_logits.to(conf.DEVICE)
                 roi_mask = roi_mask.to(conf.DEVICE)
 
-                final_logits = base_logits + model(x)
-                loss = compute_refine_loss(final_logits, y, roi_mask, criterion)
+                final_logits, delta_logits = refine_logits(model, x, base_logits, roi_mask)
+                loss = criterion(
+                    final_logits,
+                    delta_logits,
+                    base_logits,
+                    y,
+                    roi_mask,
+                    base_threshold,
+                )
 
                 optimizer.zero_grad()
                 loss.backward()
@@ -222,6 +290,12 @@ def train_one_fold(seed, args):
         model.load_state_dict(torch.load(best_model_path, map_location=conf.DEVICE))
         test_by_threshold = evaluate_thresholds(model, test_loader, conf.DEVICE, [best_threshold])
         test_metrics = test_by_threshold[best_threshold]
+        refinement_diagnostics = diagnose_refinement(
+            model,
+            test_loader,
+            conf.DEVICE,
+            best_threshold,
+        )
         visualize_predictions(
             model,
             test_loader,
@@ -240,6 +314,13 @@ def train_one_fold(seed, args):
             "batch_size": int(args.batch_size),
             "lr": float(args.lr),
             "input_items": list(conf.INPUT_ITEMS),
+            "gate_residual_with_roi": bool(conf.GATE_RESIDUAL_WITH_ROI),
+            "zero_init_residual_head": bool(conf.ZERO_INIT_RESIDUAL_HEAD),
+            "stage1_threshold": float(base_threshold),
+            "error_pixel_weight": float(conf.ERROR_PIXEL_WEIGHT),
+            "correct_pixel_weight": float(conf.CORRECT_PIXEL_WEIGHT),
+            "correct_delta_reg_weight": float(conf.CORRECT_DELTA_REG_WEIGHT),
+            "refinement_diagnostics": refinement_diagnostics,
             **test_metrics,
         }
         save_json(out_dir / "metrics.json", result)
@@ -249,6 +330,13 @@ def train_one_fold(seed, args):
             f"Dice: {result['dice']:.4f}  "
             f"Precision: {result['precision']:.4f}  "
             f"Recall: {result['recall']:.4f}"
+        )
+        print(
+            "Refinement pixels: "
+            f"repaired={refinement_diagnostics['repaired_pixels']}  "
+            f"damaged={refinement_diagnostics['damaged_pixels']}  "
+            f"net={refinement_diagnostics['net_repaired_pixels']}  "
+            f"outside_roi={refinement_diagnostics['changed_outside_roi']}"
         )
         return result
 
@@ -262,6 +350,7 @@ def parse_args():
     parser.add_argument("--lr", type=float, default=conf.LR)
     parser.add_argument("--thresholds", type=float, nargs="+", default=DEFAULT_THRESHOLDS)
     parser.add_argument("--visualize-num", type=int, default=8)
+    parser.add_argument("--output-name", default="stage2_fullscale_refine_error_focused")
     return parser.parse_args()
 
 
@@ -270,7 +359,7 @@ def main():
     results = [train_one_fold(seed, args) for seed in args.seeds]
     metric_keys = ["iou", "precision", "recall", "dice", "coverage", "pred_area"]
     summary = summarize_metrics(results, metric_keys)
-    save_json(Path(args.runs_dir) / "summary_stage2_fullscale_refine.json", summary)
+    save_json(Path(args.runs_dir) / f"summary_{args.output_name}.json", summary)
     print_summary("Stage2 Full-Scale Refine K-Fold Summary", summary, metric_keys)
 
 
