@@ -1,0 +1,19 @@
+import torch
+
+
+RUNS_DIR_NAME = "run13"
+
+BATCH_SIZE = 4
+EPOCHS = 50
+LR = 1e-3
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+TARGET_WEIGHT = 5.0
+CE_WEIGHT = 1.0
+DICE_WEIGHT = 1.0
+BOUNDARY_LOSS_WEIGHT = 0.0
+
+INTENSITY_BASE_CHANNELS = 32
+EDGE_BASE_CHANNELS = 16
+EDGE_DROPOUT = 0.10
+EDGE_ERODE_ITERATIONS = 2
