@@ -22,14 +22,19 @@ class DoubleConv(nn.Module):
 class EdgeFusion(nn.Module):
     """Inject projected edge features into the intensity stream."""
 
-    def __init__(self, intensity_channels, edge_channels, use_gate):
+    def __init__(self, intensity_channels, edge_channels, use_gate, inject_edge=True):
         super().__init__()
         self.use_gate = use_gate
-        self.edge_projection = nn.Sequential(
-            nn.Conv2d(edge_channels, intensity_channels, 1, bias=False),
-            nn.BatchNorm2d(intensity_channels),
-        )
-        if use_gate:
+        self.inject_edge = inject_edge
+        if inject_edge:
+            self.edge_projection = nn.Sequential(
+                nn.Conv2d(edge_channels, intensity_channels, 1, bias=False),
+                nn.BatchNorm2d(intensity_channels),
+            )
+        else:
+            self.edge_projection = None
+
+        if use_gate and inject_edge:
             hidden_channels = max(8, intensity_channels // 4)
             self.gate = nn.Sequential(
                 nn.Conv2d(intensity_channels * 2, hidden_channels, 3, padding=1, bias=False),
@@ -44,6 +49,10 @@ class EdgeFusion(nn.Module):
             self.gate = None
 
     def forward(self, intensity_features, edge_features):
+        if not self.inject_edge:
+            gate = torch.zeros_like(intensity_features[:, :1])
+            return intensity_features, gate
+
         projected_edge = self.edge_projection(edge_features)
         if self.gate is None:
             gate = torch.ones_like(projected_edge[:, :1])
@@ -58,7 +67,12 @@ class DualBranchGatedUNet(nn.Module):
     injected through spatial gates at selected scales.
     """
 
-    VALID_FUSION_MODES = {"no_gate", "bottleneck_gate", "multiscale_gate"}
+    VALID_FUSION_MODES = {
+        "no_gate",
+        "bottleneck_gate",
+        "multiscale_gate",
+        "shallow_gate",
+    }
 
     def __init__(
         self,
@@ -99,8 +113,18 @@ class DualBranchGatedUNet(nn.Module):
         for scale in range(5):
             use_gate = fusion_mode == "multiscale_gate" or (
                 fusion_mode == "bottleneck_gate" and scale == 4
+            ) or (
+                fusion_mode == "shallow_gate" and scale < 3
             )
-            self.fusions.append(EdgeFusion(ic[scale], ec[scale], use_gate=use_gate))
+            inject_edge = fusion_mode != "shallow_gate" or scale < 3
+            self.fusions.append(
+                EdgeFusion(
+                    ic[scale],
+                    ec[scale],
+                    use_gate=use_gate,
+                    inject_edge=inject_edge,
+                )
+            )
 
         self.up4 = nn.ConvTranspose2d(ic[4], ic[3], 2, stride=2)
         self.dec4 = DoubleConv(ic[3] * 2, ic[3])

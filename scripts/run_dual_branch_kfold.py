@@ -23,10 +23,10 @@ from scripts.train_stage1_only_strong import evaluate_thresholds, select_best_th
 
 
 DEFAULT_THRESHOLDS = [0.05, 0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90]
-EXPERIMENT_MODES = {
-    "D1": "no_gate",
-    "D2": "bottleneck_gate",
-    "D3": "multiscale_gate",
+EXPERIMENT_SPECS = {
+    "D1": {"fusion_mode": "no_gate", "boundary_loss_weight": None},
+    "D2": {"fusion_mode": "bottleneck_gate", "boundary_loss_weight": None},
+    "D3": {"fusion_mode": "multiscale_gate", "boundary_loss_weight": None},
 }
 
 
@@ -63,13 +63,17 @@ def train_one_fold(seed, experiment, args):
     val_loader = DataLoader(val_set, batch_size=args.batch_size, shuffle=False)
     test_loader = DataLoader(test_set, batch_size=args.batch_size, shuffle=False)
 
-    fusion_mode = EXPERIMENT_MODES[experiment]
+    experiment_spec = args.experiment_specs[experiment]
+    fusion_mode = experiment_spec["fusion_mode"]
+    boundary_loss_weight = experiment_spec["boundary_loss_weight"]
+    if boundary_loss_weight is None:
+        boundary_loss_weight = args.boundary_loss_weight
     with tee_stdout(out_dir / "train.log"):
         print(f"\n===== Dual-branch {experiment}, seed {seed} =====")
         print(f"Fusion mode: {fusion_mode}")
         print(f"Input items: {train_set.input_items}")
         print(f"Train/Val/Test: {len(train_set)}/{len(val_set)}/{len(test_set)}")
-        print(f"Boundary loss weight: {args.boundary_loss_weight}")
+        print(f"Boundary loss weight: {boundary_loss_weight}")
         print(f"Edge input dropout: {args.edge_dropout}")
 
         model = DualBranchGatedUNet(
@@ -108,13 +112,13 @@ def train_one_fold(seed, experiment, args):
                 optimizer.zero_grad()
                 output = model(x, return_aux=True)
                 loss = criterion(output["logits"], y)
-                if args.boundary_loss_weight > 0:
+                if boundary_loss_weight > 0:
                     boundary_target = build_boundary_target(y)
                     boundary_loss = F.binary_cross_entropy_with_logits(
                         output["boundary_logits"],
                         boundary_target,
                     )
-                    loss = loss + args.boundary_loss_weight * boundary_loss
+                    loss = loss + boundary_loss_weight * boundary_loss
                 loss.backward()
                 optimizer.step()
                 total_loss += loss.item()
@@ -148,7 +152,7 @@ def train_one_fold(seed, experiment, args):
             "intensity_base_channels": int(args.intensity_base_channels),
             "edge_base_channels": int(args.edge_base_channels),
             "edge_dropout": float(args.edge_dropout),
-            "boundary_loss_weight": float(args.boundary_loss_weight),
+            "boundary_loss_weight": float(boundary_loss_weight),
             "target_weight": float(args.target_weight),
             "dice_weight": float(args.dice_weight),
             "lr": float(args.lr),
@@ -178,13 +182,25 @@ def run_experiment(experiment, args):
     return summary
 
 
-def parse_args():
+def parse_args(
+    experiment_specs=None,
+    default_experiment="D3",
+    default_runs_dir=None,
+    description="Run lightweight dual-branch local-edge ablations.",
+):
+    experiment_specs = experiment_specs or EXPERIMENT_SPECS
+    default_runs_dir = default_runs_dir or kfold.DATA_ROOT / f"runs/{conf.RUNS_DIR_NAME}"
     parser = argparse.ArgumentParser(description="Run lightweight dual-branch local-edge ablations.")
-    parser.add_argument("--experiment", choices=["D1", "D2", "D3", "all"], default="D3")
+    parser.description = description
+    parser.add_argument(
+        "--experiment",
+        choices=[*experiment_specs, "all"],
+        default=default_experiment,
+    )
     parser.add_argument(
         "--runs-dir",
         type=Path,
-        default=kfold.DATA_ROOT / f"runs/{conf.RUNS_DIR_NAME}",
+        default=default_runs_dir,
     )
     parser.add_argument("--seeds", type=int, nargs="+", default=kfold.KFOLD_SEEDS)
     parser.add_argument("--epochs", type=int, default=conf.EPOCHS)
@@ -198,15 +214,20 @@ def parse_args():
     parser.add_argument("--edge-dropout", type=float, default=conf.EDGE_DROPOUT)
     parser.add_argument("--edge-erode-iterations", type=int, default=conf.EDGE_ERODE_ITERATIONS)
     parser.add_argument("--thresholds", type=float, nargs="+", default=DEFAULT_THRESHOLDS)
-    return parser.parse_args()
+    args = parser.parse_args()
+    args.experiment_specs = experiment_specs
+    return args
+
+
+def run_from_args(args):
+    args.runs_dir.mkdir(parents=True, exist_ok=True)
+    experiments = list(args.experiment_specs) if args.experiment == "all" else [args.experiment]
+    for experiment in experiments:
+        run_experiment(experiment, args)
 
 
 def main():
-    args = parse_args()
-    args.runs_dir.mkdir(parents=True, exist_ok=True)
-    experiments = list(EXPERIMENT_MODES) if args.experiment == "all" else [args.experiment]
-    for experiment in experiments:
-        run_experiment(experiment, args)
+    run_from_args(parse_args())
 
 
 if __name__ == "__main__":
