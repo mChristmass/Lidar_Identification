@@ -18,12 +18,13 @@ from datasets.dataset_new_data import NewDataSegmentationDataset
 from engine.stage1.loss_stage1 import SegmentationLoss
 from models.model_dual_branch import DualBranchGatedUNet
 from models.model_stage1 import UNet
+from scripts.new_data_test_reporting import evaluate_and_report_test_set
 from scripts.kfold_utils import print_summary, save_json, set_seed, summarize_metrics, tee_stdout
 from scripts.train_stage1_only_strong import evaluate_thresholds, select_best_threshold
 
 
 DEFAULT_THRESHOLDS = [0.05, 0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90]
-EXPERIMENTS = ("I0", "ID", "C1", "D1", "D3")
+EXPERIMENTS = ("I0", "ID", "IDE", "C1", "C1L", "D1", "D3")
 
 
 def load_fold_indices(index_dir, fold):
@@ -44,7 +45,13 @@ def make_dataset(indices, experiment):
 
 
 def make_model(experiment, input_channels, args):
-    if experiment in {"I0", "ID", "C1"}:
+    if experiment == "C1L":
+        return UNet(
+            in_channels=input_channels,
+            num_classes=2,
+            base_channels=args.light_unet_base_channels,
+        )
+    if experiment in {"I0", "ID", "IDE", "C1"}:
         return UNet(in_channels=input_channels, num_classes=2)
     fusion_mode = "no_gate" if experiment == "D1" else "multiscale_gate"
     return DualBranchGatedUNet(
@@ -156,6 +163,18 @@ def train_one_fold(fold, experiment, args):
         test_metrics = evaluate_thresholds(
             model, test_loader, conf.DEVICE, [best_threshold]
         )[best_threshold]
+        detailed_test_summary = evaluate_and_report_test_set(
+            model=model,
+            dataset=test_set,
+            raw_items=conf.RAW_ITEMS,
+            label_dir=conf.LABEL_DIR,
+            device=conf.DEVICE,
+            threshold=best_threshold,
+            output_dir=out_dir,
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            save_visualizations=not args.skip_test_visualizations,
+        )
         result = {
             "fold": int(fold),
             "seed": int(seed),
@@ -174,6 +193,7 @@ def train_one_fold(fold, experiment, args):
             "best_threshold": float(best_threshold),
             "best_val_iou": float(best_val_iou),
             "best_val_metrics": best_val_metrics,
+            "detailed_test_summary": detailed_test_summary,
             **test_metrics,
         }
         save_json(out_dir / "metrics.json", result)
@@ -188,6 +208,26 @@ def run_experiment(experiment, args):
     results = [train_one_fold(fold, experiment, args) for fold in args.folds]
     metric_keys = ["iou", "precision", "recall", "dice", "coverage", "pred_area"]
     summary = summarize_metrics(results, metric_keys)
+    detailed_keys = [
+        "foreground_mean_image_iou",
+        "foreground_median_image_iou",
+        "foreground_iou_std",
+        "background_false_positive_frame_rate",
+        "background_mean_pred_area",
+        "background_pixel_false_positive_rate",
+    ]
+    summary["detailed_mean"] = {
+        key: float(
+            np.mean([row["detailed_test_summary"][key] for row in results])
+        )
+        for key in detailed_keys
+    }
+    summary["detailed_std"] = {
+        key: float(
+            np.std([row["detailed_test_summary"][key] for row in results])
+        )
+        for key in detailed_keys
+    }
     save_json(Path(args.runs_dir) / f"summary_{experiment}.json", summary)
     print_summary(f"New Data {experiment}", summary, metric_keys)
     return summary
@@ -216,6 +256,16 @@ def parse_args():
     parser.add_argument("--edge-dropout", type=float, default=conf.EDGE_DROPOUT)
     parser.add_argument("--intensity-base-channels", type=int, default=conf.INTENSITY_BASE_CHANNELS)
     parser.add_argument("--edge-base-channels", type=int, default=conf.EDGE_BASE_CHANNELS)
+    parser.add_argument(
+        "--light-unet-base-channels",
+        type=int,
+        default=conf.LIGHT_UNET_BASE_CHANNELS,
+    )
+    parser.add_argument(
+        "--skip-test-visualizations",
+        action="store_true",
+        help="Skip six-panel PNGs; predictions and per-image metrics are still saved.",
+    )
     parser.add_argument("--thresholds", type=float, nargs="+", default=DEFAULT_THRESHOLDS)
     return parser.parse_args()
 

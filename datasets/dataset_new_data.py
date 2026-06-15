@@ -12,7 +12,9 @@ class NewDataSegmentationDataset(Dataset):
     EXPERIMENT_INPUTS = {
         "I0": ["intensity"],
         "ID": ["intensity", "depth"],
+        "IDE": ["intensity", "depth", "local_depth_edge"],
         "C1": ["intensity", "local_depth_edge"],
+        "C1L": ["intensity", "local_depth_edge"],
         "D1": ["intensity", "local_depth_edge"],
         "D3": ["intensity", "local_depth_edge"],
     }

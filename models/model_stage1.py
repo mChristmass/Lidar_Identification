@@ -26,31 +26,37 @@ class DoubleConv(nn.Module):
 
 
 class UNet(nn.Module):
-    def __init__(self, in_channels=conf.INPUT_CHANNEL, num_classes=2):
+    def __init__(
+        self,
+        in_channels=conf.INPUT_CHANNEL,
+        num_classes=2,
+        base_channels=64,
+    ):
         super().__init__()
 
-        self.enc1 = DoubleConv(in_channels, 64)
-        self.enc2 = DoubleConv(64, 128)
-        self.enc3 = DoubleConv(128, 256)
-        self.enc4 = DoubleConv(256, 512)
+        channels = [base_channels * (2**level) for level in range(5)]
+        self.enc1 = DoubleConv(in_channels, channels[0])
+        self.enc2 = DoubleConv(channels[0], channels[1])
+        self.enc3 = DoubleConv(channels[1], channels[2])
+        self.enc4 = DoubleConv(channels[2], channels[3])
 
         self.pool = nn.MaxPool2d(2)
 
-        self.bottleneck = DoubleConv(512, 1024)
+        self.bottleneck = DoubleConv(channels[3], channels[4])
 
-        self.up4 = nn.ConvTranspose2d(1024, 512, 2, stride=2)
-        self.dec4 = DoubleConv(1024, 512)
+        self.up4 = nn.ConvTranspose2d(channels[4], channels[3], 2, stride=2)
+        self.dec4 = DoubleConv(channels[3] * 2, channels[3])
 
-        self.up3 = nn.ConvTranspose2d(512, 256, 2, stride=2)
-        self.dec3 = DoubleConv(512, 256)
+        self.up3 = nn.ConvTranspose2d(channels[3], channels[2], 2, stride=2)
+        self.dec3 = DoubleConv(channels[2] * 2, channels[2])
 
-        self.up2 = nn.ConvTranspose2d(256, 128, 2, stride=2)
-        self.dec2 = DoubleConv(256, 128)
+        self.up2 = nn.ConvTranspose2d(channels[2], channels[1], 2, stride=2)
+        self.dec2 = DoubleConv(channels[1] * 2, channels[1])
 
-        self.up1 = nn.ConvTranspose2d(128, 64, 2, stride=2)
-        self.dec1 = DoubleConv(128, 64)
+        self.up1 = nn.ConvTranspose2d(channels[1], channels[0], 2, stride=2)
+        self.dec1 = DoubleConv(channels[0] * 2, channels[0])
 
-        self.out_conv = nn.Conv2d(64, num_classes, 1)
+        self.out_conv = nn.Conv2d(channels[0], num_classes, 1)
 
     def forward(self, x):
         e1 = self.enc1(x)

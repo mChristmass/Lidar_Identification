@@ -35,4 +35,5 @@ EDGE_ERODE_ITERATIONS = 2
 
 INTENSITY_BASE_CHANNELS = 32
 EDGE_BASE_CHANNELS = 16
+LIGHT_UNET_BASE_CHANNELS = 38
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
