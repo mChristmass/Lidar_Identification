@@ -1,0 +1,30 @@
+from pathlib import Path
+
+from configs.new_data.config_new_data import (
+    BATCH_SIZE,
+    CE_WEIGHT,
+    DEVICE,
+    DICE_WEIGHT,
+    EARLY_STOPPING_PATIENCE,
+    EPOCHS,
+    FOLD_SEEDS,
+    INDEX_DIR,
+    LABEL_DIR,
+    LIGHT_UNET_BASE_CHANNELS,
+    LR,
+    NUM_FOLDS,
+    RAW_ITEMS,
+    TARGET_WEIGHT,
+)
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+RUNS_DIR = PROJECT_ROOT / "data" / "new_data_run0612" / "run4"
+
+RELIABILITY_BASE_CHANNELS = 12
+EDGE_KEEP_ALPHA = 0.25
+GATE_LOSS_WEIGHT = 0.20
+BOUNDARY_LOSS_WEIGHT = 0.10
+BOUNDARY_RADIUS = 2
+EDGE_THRESHOLD = 0.10
+GATE_FOCAL_GAMMA = 2.0
