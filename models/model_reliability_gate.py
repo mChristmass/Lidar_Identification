@@ -45,10 +45,16 @@ class ReliabilityGuidedEdgeUNet(nn.Module):
         reliability_base_channels=12,
         edge_keep_alpha=0.25,
         use_raw_depth=True,
+        modulation_mode="suppress",
+        gate_beta=0.25,
     ):
         super().__init__()
         self.edge_keep_alpha = float(edge_keep_alpha)
         self.use_raw_depth = bool(use_raw_depth)
+        self.modulation_mode = modulation_mode
+        self.gate_beta = float(gate_beta)
+        if self.modulation_mode not in {"suppress", "residual"}:
+            raise ValueError(f"Unsupported modulation mode: {self.modulation_mode}")
         reliability_channels = 3 if self.use_raw_depth else 2
         self.reliability = ReliabilityEncoder(
             in_channels=reliability_channels,
@@ -96,7 +102,10 @@ class ReliabilityGuidedEdgeUNet(nn.Module):
 
         reliability_logits = self.reliability(reliability_input)
         reliability = torch.sigmoid(reliability_logits)
-        edge_weight = self.edge_keep_alpha + (1.0 - self.edge_keep_alpha) * reliability
+        if self.modulation_mode == "residual":
+            edge_weight = 1.0 + self.gate_beta * (reliability - 0.5)
+        else:
+            edge_weight = self.edge_keep_alpha + (1.0 - self.edge_keep_alpha) * reliability
         filtered_edge = edge * edge_weight
 
         e1 = self.enc1(torch.cat([intensity, filtered_edge], dim=1))

@@ -35,37 +35,71 @@ from scripts.train_stage1_only_strong import (
 
 
 DEFAULT_THRESHOLDS = [0.05, 0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90]
-EXPERIMENTS = ("R0", "R1", "R2", "R3", "R4")
+EXPERIMENTS = ("R0", "R1", "R2", "R3", "R4", "R5", "R6", "R7")
 EXPERIMENT_SPECS = {
     "R0": {
         "description": "C1L parameter-matched baseline",
         "gate_supervision": False,
         "use_raw_depth": False,
         "edge_keep_alpha": 1.0,
+        "modulation_mode": "suppress",
+        "gate_beta": 0.0,
     },
     "R1": {
         "description": "Reliability gate without explicit gate supervision",
         "gate_supervision": False,
         "use_raw_depth": True,
         "edge_keep_alpha": conf.EDGE_KEEP_ALPHA,
+        "modulation_mode": "suppress",
+        "gate_beta": 0.0,
     },
     "R2": {
         "description": "Supervised raw-depth edge reliability gate",
         "gate_supervision": True,
         "use_raw_depth": True,
         "edge_keep_alpha": conf.EDGE_KEEP_ALPHA,
+        "modulation_mode": "suppress",
+        "gate_beta": 0.0,
     },
     "R3": {
         "description": "Supervised reliability gate without raw depth",
         "gate_supervision": True,
         "use_raw_depth": False,
         "edge_keep_alpha": conf.EDGE_KEEP_ALPHA,
+        "modulation_mode": "suppress",
+        "gate_beta": 0.0,
     },
     "R4": {
         "description": "Supervised reliability gate without minimum edge retention",
         "gate_supervision": True,
         "use_raw_depth": True,
         "edge_keep_alpha": 0.0,
+        "modulation_mode": "suppress",
+        "gate_beta": 0.0,
+    },
+    "R5": {
+        "description": "Supervised raw-depth residual edge modulation, beta=0.2",
+        "gate_supervision": True,
+        "use_raw_depth": True,
+        "edge_keep_alpha": 1.0,
+        "modulation_mode": "residual",
+        "gate_beta": 0.2,
+    },
+    "R6": {
+        "description": "Supervised raw-depth residual edge modulation, beta=0.3",
+        "gate_supervision": True,
+        "use_raw_depth": True,
+        "edge_keep_alpha": 1.0,
+        "modulation_mode": "residual",
+        "gate_beta": 0.3,
+    },
+    "R7": {
+        "description": "Unsupervised raw-depth residual edge modulation, beta=0.2",
+        "gate_supervision": False,
+        "use_raw_depth": True,
+        "edge_keep_alpha": 1.0,
+        "modulation_mode": "residual",
+        "gate_beta": 0.2,
     },
 }
 
@@ -107,6 +141,8 @@ def make_model(experiment, args):
         reliability_base_channels=args.reliability_base_channels,
         edge_keep_alpha=spec["edge_keep_alpha"],
         use_raw_depth=spec["use_raw_depth"],
+        modulation_mode=spec["modulation_mode"],
+        gate_beta=spec["gate_beta"],
     )
 
 
@@ -209,7 +245,9 @@ def train_one_fold(fold, experiment, args):
         print(
             f"Gate supervision: {spec['gate_supervision']}  "
             f"Raw depth for gate: {spec['use_raw_depth']}  "
-            f"Edge keep alpha: {spec['edge_keep_alpha']}"
+            f"Edge keep alpha: {spec['edge_keep_alpha']}  "
+            f"Mode: {spec['modulation_mode']}  "
+            f"Beta: {spec['gate_beta']}"
         )
 
         model = make_model(experiment, args).to(conf.DEVICE)
@@ -338,6 +376,8 @@ def train_one_fold(fold, experiment, args):
             "gate_supervision": bool(spec["gate_supervision"]),
             "use_raw_depth": bool(spec["use_raw_depth"]),
             "edge_keep_alpha": float(spec["edge_keep_alpha"]),
+            "modulation_mode": spec["modulation_mode"],
+            "gate_beta": float(spec["gate_beta"]),
             "gate_loss_weight": float(args.gate_loss_weight if spec["gate_supervision"] else 0.0),
             "boundary_loss_weight": float(args.boundary_loss_weight if experiment != "R0" else 0.0),
             "boundary_radius": int(args.boundary_radius),
@@ -401,33 +441,42 @@ def load_per_image_metrics(path):
 
 
 def summarize_paired_comparisons(args, experiments):
-    if "R2" not in experiments:
+    primary = next(
+        (name for name in ("R5", "R6", "R7", "R2") if name in experiments),
+        None,
+    )
+    if primary is None:
         return
     comparisons = {}
     for baseline in experiments:
-        if baseline == "R2":
+        if baseline == primary:
             continue
         differences = []
         wins = ties = losses = 0
         compared_images = 0
         for fold in args.folds:
-            r2_path = Path(args.runs_dir) / f"fold_{fold}" / "R2" / "test_per_image_metrics.csv"
+            primary_path = (
+                Path(args.runs_dir)
+                / f"fold_{fold}"
+                / primary
+                / "test_per_image_metrics.csv"
+            )
             baseline_path = (
                 Path(args.runs_dir)
                 / f"fold_{fold}"
                 / baseline
                 / "test_per_image_metrics.csv"
             )
-            if not r2_path.exists() or not baseline_path.exists():
+            if not primary_path.exists() or not baseline_path.exists():
                 continue
-            r2_rows = load_per_image_metrics(r2_path)
+            primary_rows = load_per_image_metrics(primary_path)
             baseline_rows = load_per_image_metrics(baseline_path)
-            for label_index in sorted(set(r2_rows) & set(baseline_rows)):
-                r2_iou = r2_rows[label_index]["iou"]
+            for label_index in sorted(set(primary_rows) & set(baseline_rows)):
+                primary_iou = primary_rows[label_index]["iou"]
                 baseline_iou = baseline_rows[label_index]["iou"]
-                if r2_iou in ("", None) or baseline_iou in ("", None):
+                if primary_iou in ("", None) or baseline_iou in ("", None):
                     continue
-                difference = float(r2_iou) - float(baseline_iou)
+                difference = float(primary_iou) - float(baseline_iou)
                 differences.append(difference)
                 compared_images += 1
                 if difference > 1e-9:
@@ -438,7 +487,7 @@ def summarize_paired_comparisons(args, experiments):
                     ties += 1
         if differences:
             values = np.asarray(differences, dtype=np.float64)
-            comparisons[f"R2_vs_{baseline}"] = {
+            comparisons[f"{primary}_vs_{baseline}"] = {
                 "foreground_images": compared_images,
                 "mean_image_iou_difference": float(values.mean()),
                 "median_image_iou_difference": float(np.median(values)),
@@ -453,7 +502,7 @@ def summarize_paired_comparisons(args, experiments):
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Run the R0-R4 reliability-guided local depth edge experiments."
+        description="Run reliability-guided local depth edge experiments."
     )
     parser.add_argument(
         "--experiments",
