@@ -21,7 +21,7 @@ def main():
     args = parse_args()
     if args.experiments == ["all"]:
         args.experiments = ["R0", "R5", "R6", "R7"]
-    if args.folds == list(range(conf.NUM_FOLDS)):
+    if "--folds" not in sys.argv:
         args.folds = [0, 1]
     default_run4 = Path("data/new_data_run0612/run4")
     if Path(args.runs_dir).as_posix().endswith(default_run4.as_posix()):
