@@ -1,0 +1,16 @@
+experiments/paper_benchmark_v1/
+experiments/cmx_initial_transfer/official/
+experiments/cmx_initial_transfer/pretrained/mit_b0.pth
+experiments/cmx_initial_transfer/pretrained/mit_b1.pth
+experiments/cmx_initial_transfer/pretrained/mit_b2.pth
+experiments/t8_transfer_statistics/model_transfer.py
+experiments/component_diagnosis/model_component_diagnosis.py
+scripts/audit_private_train_degradation.py
+scripts/prepare_nyuv2_paper.sh
+scripts/run_paper_phase1.sh
+data/new_data/merged/intensity.npy
+data/new_data/merged/depth.npy
+data/new_data/merged/label/
+data/new_data/merged/paper_split_v1/
+data/public_semseg/nyuv2/raw/splits.mat
+data/public_semseg/nyuv2/raw/labels40.mat

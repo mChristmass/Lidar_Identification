@@ -28,6 +28,7 @@ outputs/
 # Local datasets and experiment outputs
 data/raw/*
 !data/raw/README.txt
+data/new_data/*
 data/labels/*
 !data/labels/.gitkeep
 data/runs/*
@@ -38,6 +39,8 @@ data/kfold_indices/*
 !data/kfold_indices/.gitkeep
 !data/kfold_indices/val_indices_seed*.npy
 !data/kfold_indices/test_indices_seed*.npy
+data/public_semseg/
+data/paper_benchmark_runs/
 
 # Per-frame inference artifacts
 test_visualizations/

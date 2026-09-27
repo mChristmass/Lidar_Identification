@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "frozen_on": "2026-09-22",
+  "status": "preflight_ready_final_evaluation_locked",
+  "scientific_question": "Does a modern multimodal framework raise the ceiling over T8, and does the future proposed method improve robustness to low-signal appearance and invalid depth?",
+  "datasets": {
+    "private": {
+      "task": "binary SPL target segmentation",
+      "tune_split": "train=970, dev=137; final_test is inaccessible during tuning",
+      "final_split": "retrain on train+dev=1107, evaluate final_test=283 once",
+      "input": "measured intensity + measured depth + depth-validity map"
+    },
+    "nyuv2": {
+      "task": "NYUv2 40-class semantic segmentation",
+      "official_split": "train=795, test=654",
+      "tune_split": "fixed train=715, dev=80 drawn only from official train",
+      "input": "RGB-to-gray appearance proxy + rawDepths + depth-validity map"
+    }
+  },
+  "phase_1_framework_diagnosis": {
+    "models": ["T8", "CMX_B0", "CMX_B1", "CMX_B2"],
+    "seeds": [42, 777, 2025],
+    "private_conditions": ["natural"],
+    "nyuv2_conditions": ["clean", "joint:medium"],
+    "selection_rule": "Choose the modern backbone family using dev mIoU, stability across seeds, parameter cost, and failure-case inspection; do not use final_test/test."
+  },
+  "phase_2_robustness_baselines": {
+    "models": ["T8", "selected_CMX"],
+    "seeds": [42, 777, 2025],
+    "training_regimes": ["clean", "deterministic balanced mixture of corruption types and severities"],
+    "corruptions": [
+      "clean",
+      "random_missing",
+      "block_missing",
+      "edge_missing",
+      "low_signal_missing",
+      "depth_noise",
+      "photon_proxy",
+      "joint"
+    ],
+    "severities": ["light", "medium", "heavy"],
+    "evaluation_rule": "Each fixed checkpoint is evaluated on clean and every corruption/severity. Never retrain a separate model for each test corruption.",
+    "reporting": "Clean is evaluated once; each non-clean corruption is evaluated at all three severities. Report per-condition mIoU and drop from that checkpoint's clean score, never only an aggregate."
+  },
+  "phase_3_method_development": {
+    "rule": "Add the new module only after phases 1-2 identify the actual failure mode. Tune on private dev and NYUv2 dev only.",
+    "required_ablations": [
+      "selected framework without module",
+      "module components added one at a time",
+      "full method",
+      "parameter/FLOP-matched control where practical"
+    ]
+  },
+  "final_gate": {
+    "locked": true,
+    "unlock_condition": "Architecture, module, optimizer, input resolution, epoch count, seeds, corruption protocol, and checkpoint selection rule are written and frozen.",
+    "cli_guard": "--confirm-final-protocol"
+  },
+  "primary_metrics": {
+    "both": ["mIoU", "per-class IoU", "pixel accuracy"],
+    "private_additional": ["Dice", "precision", "recall", "boundary F1", "background false-positive frame rate"],
+    "robustness": ["absolute mIoU", "drop from clean", "severity-response curve"]
+  }
+}
