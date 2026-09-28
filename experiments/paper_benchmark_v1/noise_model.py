@@ -10,7 +10,7 @@ class NoiseCMX(CMXPaper):
     def __init__(self, method, backbone='CMX_B2', num_classes=40,
                  image_size=640, decoder_dim=256):
         super().__init__(backbone, num_classes, image_size, decoder_dim)
-        if method not in ('C1', 'D1', 'D2'):
+        if method not in ('C1', 'D1', 'D2', 'S1', 'S2'):
             raise ValueError(method)
         self.method = method
         if method != 'C1':
@@ -20,6 +20,13 @@ class NoiseCMX(CMXPaper):
                 nn.Conv2d(16, 1, 3, padding=1))
             nn.init.zeros_(self.restorer[-1].weight)
             nn.init.zeros_(self.restorer[-1].bias)
+        if method == 'S2':
+            self.noise_gate = nn.Sequential(
+                nn.Conv2d(3, 8, 3, stride=2, padding=1), nn.GELU(),
+                nn.Conv2d(8, 8, 3, stride=2, padding=1), nn.GELU(),
+                nn.AdaptiveAvgPool2d(1), nn.Conv2d(8, 1, 1))
+            nn.init.zeros_(self.noise_gate[-1].weight)
+            nn.init.constant_(self.noise_gate[-1].bias, -2.)
         if method == 'D2':
             self.reliability = nn.Sequential(
                 nn.Conv2d(3, 16, 3, padding=1), nn.GELU(),
@@ -42,6 +49,22 @@ class NoiseCMX(CMXPaper):
         if self.method == 'D2':
             self.fusion_strength.clamp_(0., 1.)
 
+    def restore(self, inputs):
+        intensity = inputs[:, :1]
+        delta = self.restorer(inputs)
+        gate_logits = torch.zeros_like(intensity[:, :, :1, :1])
+        gate = torch.ones_like(gate_logits)
+        if self.method == 'S2':
+            features = torch.cat([intensity] + [
+                (intensity - F.avg_pool2d(F.pad(intensity, (k//2,)*4,
+                                               mode='replicate'), k, 1)).abs()
+                for k in (3, 7)], dim=1)
+            gate_logits = self.noise_gate(features)
+            gate = gate_logits.sigmoid()
+        return {'restored_intensity': (intensity + gate*delta).clamp(0., 1.),
+                'raw_restored_intensity': (intensity + delta).clamp(0., 1.),
+                'noise_gate_logits': gate_logits, 'noise_gate': gate}
+
     def forward(self, inputs):
         if inputs.ndim != 4 or inputs.shape[1] != 3:
             raise ValueError('Expected intensity, normalized depth, validity')
@@ -49,11 +72,12 @@ class NoiseCMX(CMXPaper):
         if self.method == 'C1':
             return super().forward(inputs)
         # The correction and confidence both use observed inputs only.
-        corrected = (intensity + self.restorer(inputs)).clamp(0., 1.)
+        restoration = self.restore(inputs)
+        corrected = restoration['restored_intensity']
         corrected_inputs = torch.cat((corrected, inputs[:, 1:]), dim=1)
-        if self.method == 'D1':
+        if self.method in ('D1', 'S1', 'S2'):
             out = super().forward(corrected_inputs)
-            out['restored_intensity'] = corrected
+            out.update(restoration)
             return out
         confidence = self.reliability(inputs).sigmoid()
         a, d = corrected, inputs[:, 1:2]

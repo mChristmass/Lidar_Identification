@@ -27,6 +27,8 @@ EPOCHS = 20
 
 
 def update(args, **values):
+    if hasattr(args, 'window_progress'):
+        values.update(args.window_progress)
     save(args.output_dir / 'status.json', {'updated_unix': time.time(), **values})
 
 
@@ -108,7 +110,8 @@ def load_source(args, seed):
 def train_job(args, name, seed, source, protocol, refs):
     group_name = f'{name}_seed{seed}'
     group_index = {('F1', 42): 1, ('F2', 42): 2,
-                   ('R0', 777): 3, ('F1', 777): 4, ('F2', 777): 4}[(name, seed)]
+                    ('R0', 777): 3, ('R0', 2025): 5,
+                    ('F1', 777): 4, ('F2', 777): 4}[(name, seed)]
     destination = args.output_dir / group_name
     destination.mkdir(exist_ok=True)
     last = destination / 'last.pth'

@@ -27,6 +27,8 @@ EPOCHS = 20
 
 
 def update(args, **values):
+    if hasattr(args, 'window_progress'):
+        values.update(args.window_progress)
     save(args.output_dir / 'status.json', {'updated_unix': time.time(), **values})
 
 
@@ -112,6 +114,23 @@ def weighted_intensity_loss(per_sample, active):
     return (per_sample * weight).mean()
 
 
+def selective_loss(prediction, clean_view, active, method):
+    applied = (prediction['restored_intensity'].float() -
+               clean_view[:, :1].float()).square().mean((1, 2, 3))
+    raw = (prediction['raw_restored_intensity'].float() -
+           clean_view[:, :1].float()).square().mean((1, 2, 3))
+    # Inactive input intensity is exactly the clean target. Increase its
+    # identity weight from D1's .05 to 1; keep noisy reconstruction weight 1.
+    reconstruction = torch.where(active, .5*(raw+applied), applied).mean()
+    gate_loss = reconstruction.new_zeros(())
+    if method == 'S2':
+        per_sample = F.binary_cross_entropy_with_logits(
+            prediction['noise_gate_logits'].float().flatten(),
+            active.float(), reduction='none')
+        gate_loss = (per_sample * torch.where(active, 1., .2)).mean()
+    return reconstruction, gate_loss
+
+
 @torch.no_grad()
 def confidence_audit(model, root, device):
     """Check whether D2 responds to dev stress; never used for selection."""
@@ -181,7 +200,7 @@ def train_candidate(args, method, seed, source, protocol, refs):
         history, start = state['history'], state['epoch'] + 1
         del state
     dataset = PairedIntensityData(args.nyuv2_dir, seed)
-    group_index = {'C1': 1, 'D1': 2, 'D2': 3}[method] if seed == 42 else 5
+    group_index = {'C1': 1, 'D1': 2, 'D2': 3, 'S1': 2, 'S2': 3}[method] if seed == 42 else 5
     for epoch in range(start, EPOCHS + 1):
         seed_all(seed + epoch)
         dataset.epoch = epoch
@@ -221,7 +240,9 @@ def train_candidate(args, method, seed, source, protocol, refs):
                     prediction['intensity_confidence'].float(), target, reduction='none')
                 confidence_loss = weighted_intensity_loss(
                     per_pixel.mean(dim=(1, 2, 3)), active)
-            combined = ce + .2*kl + 5*mse + .05*confidence_loss
+            if method in ('S1', 'S2'):
+                mse, confidence_loss = selective_loss(prediction, clean_view, active, method)
+            combined = ce + .2*kl + 5*mse + (.1 if method == 'S2' else .05)*confidence_loss
             loss = combined * x.shape[0] / window_samples
             if not torch.isfinite(loss):
                 raise FloatingPointError(f'{group_name} epoch={epoch} batch={index}')
