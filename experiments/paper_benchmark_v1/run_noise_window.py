@@ -15,6 +15,7 @@ from torch.utils.data import DataLoader
 from .corruptions_v2 import FAMILIES, RATES
 from .diagnose_phase1 import DiagnosticData, digest, regional
 from .noise_model import NoiseCMX
+from .model import CMXPaper
 from .paired_intensity import PairedIntensityData
 from .run import seed_all
 from .run_fusion_window import train_job as train_r0
@@ -164,8 +165,16 @@ def confidence_audit(model, root, device):
     return output
 
 
+def candidate_train_mode(model, frozen=False):
+    model.train()
+    if frozen:
+        model.backbone.eval()
+        model.decode_head.eval()
+
+
 def train_candidate(args, method, seed, source, protocol, refs):
-    group_name = f'{method}_seed{seed}'
+    preservation = getattr(args, 'preservation', None)
+    group_name = f'{getattr(args, "group_prefix", method)}_seed{seed}'
     destination = args.output_dir / group_name
     destination.mkdir(exist_ok=True)
     last = destination / 'last.pth'
@@ -180,10 +189,21 @@ def train_candidate(args, method, seed, source, protocol, refs):
     seed_all(seed)
     model = NoiseCMX(method, decoder_dim=source['args']['decoder_dim']).to(args.device)
     model.load_baseline(source['model'])
+    frozen = preservation == 'frozen'
+    fixed_teacher = None
+    if preservation == 'teacher':
+        fixed_teacher = CMXPaper('CMX_B2', 40, 640, source['args']['decoder_dim']).to(args.device).eval()
+        fixed_teacher.load_state_dict(source['model'], strict=True)
+        fixed_teacher.requires_grad_(False)
+    if frozen:
+        model.backbone.requires_grad_(False)
+        model.decode_head.requires_grad_(False)
     base, added = [], []
     for name, parameter in model.named_parameters():
+        if not parameter.requires_grad:
+            continue
         (base if name.startswith(('backbone.', 'decode_head.')) else added).append(parameter)
-    groups = [{'params': base, 'lr': 1e-5, 'initial_lr': 1e-5}]
+    groups = [{'params': base, 'lr': 1e-5, 'initial_lr': 1e-5}] if base else []
     if added:
         groups.append({'params': added, 'lr': 1e-3, 'initial_lr': 1e-3})
     optimizer = torch.optim.AdamW(groups, weight_decay=.01)
@@ -207,9 +227,9 @@ def train_candidate(args, method, seed, source, protocol, refs):
         loader = DataLoader(dataset, batch_size=2, shuffle=True, num_workers=0,
                             pin_memory=False,
                             generator=torch.Generator().manual_seed(seed + epoch))
-        model.train()
+        candidate_train_mode(model, frozen)
         optimizer.zero_grad(set_to_none=True)
-        totals = dict(ce=0., consistency=0., denoise=0., reliability=0.)
+        totals = dict(ce=0., consistency=0., denoise=0., reliability=0., preservation=0.)
         for index, (x, y, clean_view, active) in enumerate(loader):
             factor = (1 - ((epoch - 1) + index/len(loader)) / EPOCHS) ** .9
             for group in optimizer.param_groups:
@@ -225,7 +245,7 @@ def train_candidate(args, method, seed, source, protocol, refs):
                 model.eval()
                 with torch.no_grad(), torch.autocast(device_type='cuda', enabled=amp):
                     teacher = model(clean_view)['logits']
-                model.train()
+                candidate_train_mode(model, frozen)
                 kl = consistency(prediction['logits'], teacher, y, active)
             mse = ce.new_zeros(())
             confidence_loss = ce.new_zeros(())
@@ -243,6 +263,13 @@ def train_candidate(args, method, seed, source, protocol, refs):
             if method in ('S1', 'S2'):
                 mse, confidence_loss = selective_loss(prediction, clean_view, active, method)
             combined = ce + .2*kl + 5*mse + (.1 if method == 'S2' else .05)*confidence_loss
+            preserve = ce.new_zeros(())
+            if fixed_teacher is not None and bool((~active).any()):
+                with torch.no_grad(), torch.autocast(device_type='cuda', enabled=amp):
+                    target_logits = fixed_teacher(x[~active])['logits']
+                preserve = consistency(prediction['logits'][~active], target_logits,
+                                       y[~active], torch.ones_like(active[~active]))
+                combined = combined + preserve
             loss = combined * x.shape[0] / window_samples
             if not torch.isfinite(loss):
                 raise FloatingPointError(f'{group_name} epoch={epoch} batch={index}')
@@ -255,7 +282,7 @@ def train_candidate(args, method, seed, source, protocol, refs):
                 model.project_parameters()
                 optimizer.zero_grad(set_to_none=True)
             for key, value in (('ce', ce), ('consistency', kl), ('denoise', mse),
-                               ('reliability', confidence_loss)):
+                               ('reliability', confidence_loss), ('preservation', preserve)):
                 totals[key] += float(value.detach()) * x.shape[0]
             if index % 25 == 0 or index + 1 == len(loader):
                 update(args, phase='training', group=group_name,
@@ -273,6 +300,10 @@ def train_candidate(args, method, seed, source, protocol, refs):
         save(destination / 'history.json', {'epochs': history})
         print(f'NOISE_TRAIN group={group_name} epoch={epoch}/{EPOCHS} '
               f'ce={history[-1]["losses"]["ce"]:.6f}', flush=True)
+    if frozen:
+        for key, expected in source['model'].items():
+            if not torch.equal(model.state_dict()[key].detach().cpu(), expected.cpu()):
+                raise ValueError(f'Frozen segmentation state changed: {key}')
     fingerprint = digest(last)
     model.eval()
     scores = []
@@ -313,7 +344,7 @@ def train_candidate(args, method, seed, source, protocol, refs):
     print(f'GROUP_COMPLETE {group_name} clean={result["clean_miou"]:.6f} '
           f'corrupt_mean={result["corruption_mean_miou"]:.6f} '
           f'gain_pp={result["corruption_mean_gain_pp"]:+.3f}', flush=True)
-    del model, optimizer, scaler
+    del model, optimizer, scaler, fixed_teacher
     if amp:
         torch.cuda.empty_cache()
     return result
