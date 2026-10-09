@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="360" viewBox="0 0 900 360">
+  <rect width="900" height="360" fill="white"/>
+  <style>.t{font:20px Arial,sans-serif;fill:#222}.s{font:16px Arial,sans-serif;fill:#555}.v{font:bold 18px Arial,sans-serif;fill:#222}</style>
+  <text x="30" y="36" class="t">Private dev foreground IoU under the unified protocol</text>
+  <line x1="190" y1="70" x2="190" y2="320" stroke="#bbb"/>
+  <text x="34" y="105" class="t">T8</text><rect x="190" y="80" width="545" height="34" rx="4" fill="#9aa4b2"/><text x="747" y="104" class="v">68.12%</text>
+  <text x="34" y="165" class="t">CMX-B0</text><rect x="190" y="140" width="557" height="34" rx="4" fill="#5b8ff9"/><text x="759" y="164" class="v">69.63%</text>
+  <text x="34" y="225" class="t">CMX-B1</text><rect x="190" y="200" width="576" height="34" rx="4" fill="#3d76dd"/><text x="778" y="224" class="v">71.96%</text>
+  <text x="34" y="285" class="t">CMX-B2</text><rect x="190" y="260" width="572" height="34" rx="4" fill="#6aa4ff"/><text x="774" y="284" class="v">71.55%</text>
+  <text x="190" y="340" class="s">Three-seed mean; foreground IoU, not binary mIoU</text>
+</svg>
