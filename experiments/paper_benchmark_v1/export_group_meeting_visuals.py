@@ -335,7 +335,13 @@ def export_public_group(args, group, condition, audit):
 def export_private_group(args, group, audit):
     dataset = PrivatePaperDataset(args.private_dir,
                                   args.private_dir / "paper_split_v1/dev_indices.npy")
-    items = [dataset[index] for index in range(len(dataset))]
+    all_items = [dataset[index] for index in range(len(dataset))]
+    # Empty-GT frames yield foreground-IoU extremes of 0/1 and visually empty
+    # panels. They are useful for the aggregate FP metric, but not for a
+    # target-segmentation qualitative comparison.
+    items = [item for item in all_items if item["labels"].bool().any()]
+    if len(items) < 4:
+        raise RuntimeError("Fewer than four positive private dev samples")
     models = private_models(args) if group == "observation" else private_baseline_models(args)
     baseline = "B0" if group == "observation" else "T8"
     predictions = infer(models, items, args.device)
@@ -361,14 +367,31 @@ def export_private_group(args, group, audit):
 def execute(args):
     if args.device.startswith("cuda") and not torch.cuda.is_available():
         raise RuntimeError("CUDA requested but unavailable")
-    required = [args.nyuv2_dir / "manifests/dev.jsonl",
-                args.private_dir / "paper_split_v1/dev_indices.npy"]
+    required = [args.private_dir / "paper_split_v1/dev_indices.npy"]
+    if not args.refresh_private:
+        required.append(args.nyuv2_dir / "manifests/dev.jsonl")
     missing = [str(path) for path in required if not path.is_file()]
     if missing:
         raise FileNotFoundError("Required data missing:\n" + "\n".join(missing))
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    audit = {"scope": "frozen development sets only; no final-test access",
-             "device": args.device, "outputs": []}
+    manifest = args.output_dir / "selection_manifest.json"
+    if args.refresh_private and manifest.is_file():
+        audit = json.loads(manifest.read_text(encoding="utf-8"))
+        audit["device"] = args.device
+    else:
+        audit = {"scope": "frozen development sets only; no final-test access",
+                 "device": args.device, "outputs": []}
+    if args.refresh_private:
+        for group in ("baseline", "observation"):
+            print(f"VISUAL_STEP private {group}", flush=True)
+            export_private_group(args, group, audit)
+        audit["outputs"] = sorted(str(path.relative_to(args.output_dir)).replace("\\", "/")
+                                  for path in args.output_dir.rglob("*.png"))
+        save_json(manifest, audit)
+        save_json(args.output_dir / "complete.json",
+                  {"figures": len(audit["outputs"]), "final_test_access": False})
+        print(f'VISUAL_COMPLETE figures={len(audit["outputs"])} output={args.output_dir}', flush=True)
+        return
     print("VISUAL_STEP dataset_overviews", flush=True)
     export_data(args, audit)
     print("VISUAL_STEP degradations", flush=True)
@@ -403,6 +426,8 @@ def main():
     parser.add_argument("--output-dir", type=Path,
                         default=Path("data/paper_benchmark_runs/group_meeting_visuals_v1"))
     parser.add_argument("--device", default="cuda")
+    parser.add_argument("--refresh-private", action="store_true",
+                        help="Regenerate only positive-target private comparison panels")
     execute(parser.parse_args())
 
 

@@ -30,6 +30,15 @@ tail -f data/paper_benchmark_runs/group_meeting_visuals_v1/launcher.log
 Successful completion writes `complete.json`. Sync the entire
 `data/paper_benchmark_runs/group_meeting_visuals_v1/` directory locally.
 
+To refresh only the two private qualitative panels after an earlier complete
+export, run:
+
+```bash
+python -u -m experiments.paper_benchmark_v1.export_group_meeting_visuals \
+  --output-dir data/paper_benchmark_runs/group_meeting_visuals_v1 \
+  --device cuda --refresh-private
+```
+
 Required server inputs are the complete `data/public_semseg/nyuv2/processed/`
 directory, the frozen private data under `data/new_data/merged/`, and existing
 checkpoints under `data/paper_benchmark_runs/` for mixed control, reliability,
