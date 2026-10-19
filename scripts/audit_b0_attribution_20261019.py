@@ -40,14 +40,14 @@ def regions(y,x):
 def process(domain,items,m,classes,out):
     rows=[];out=Path(out)/domain;out.mkdir(parents=True,exist_ok=True)
     for n,b in enumerate(items,1):
-        x=b['inputs'].float();y=b['labels'].numpy();full=pred(m,x);xi=x.clone();xi[0]=0;pi=pred(m,xi);xd=x.clone();xd[1:]=0;pd=pred(m,xd);ok=y!=255
+        x=b['inputs'].float();y=b['labels'].numpy();full=pred(m,x);xi=x.clone();xi[0]=0;pd=pred(m,xi);xd=x.clone();xd[1:]=0;pi=pred(m,xd);ok=y!=255
         def sc(z):return float(image_score(z,y,classes))
         low=F.interpolate(F.avg_pool2d(x[None],2,2),size=x.shape[-2:],mode='bilinear',align_corners=False)[0];pl=pred(m,low)
         rr=regions(y,x.numpy()); fs=sc(full);iscore=sc(pi);dscore=sc(pd);r=dict(sample_id=str(b['sample_id']),full_iou=fs,i_only_iou=iscore,d_only_iou=dscore,lowres_iou=sc(pl),scale_drop=fs-sc(pl),intensity_rescue=iscore-dscore,depth_rescue=dscore-iscore,modal_conflict=float(((pi!=pd)&ok).mean()),conflict_hurts_full=bool(fs+1e-9<max(iscore,dscore)),full_vs_i_disagreement=float((full[ok]!=pi[ok]).mean()),full_vs_d_disagreement=float((full[ok]!=pd[ok]).mean()),hole_fraction=float((x[2].numpy()<=.5).mean()),target_hole_fraction=float((x[2].numpy()[y==1]<=.5).mean()) if classes==2 and (y==1).any() else None,boundary_fraction=float(rr['boundary'].sum()/max(ok.sum(),1)),smallest_component=min(components(y,classes) or [None]),gt_area=int((y==1).sum()) if classes==2 else None,region_accuracy={k:float((full[v]==y[v]).mean()) if v.any() else None for k,v in rr.items()});rows.append(r)
         if n%20==0:print(f'B0_CASES domain={domain} {n}/{len(items)}',flush=True)
     valid=[r for r in rows if r['gt_area'] is None or r['gt_area']>0]
     sel={'failure':sorted(valid,key=lambda r:r['full_iou'])[:10],'modal_conflict':sorted(valid,key=lambda r:(r['conflict_hurts_full'],r['modal_conflict']),reverse=True)[:10],'depth_hole_boundary':sorted(valid,key=lambda r:r['hole_fraction']*r['boundary_fraction'],reverse=True)[:10],'small_or_thin':sorted(valid,key=lambda r:(r['smallest_component'] if r['smallest_component'] is not None else 10**9))[:10],'scale_loss':sorted(valid,key=lambda r:r['scale_drop'],reverse=True)[:10],'intensity_vs_depth':sorted(valid,key=lambda r:abs(r['intensity_rescue']-r['depth_rescue']),reverse=True)[:10]}
-    save(out/'cases.json',dict(domain=domain,rows=rows,selections={k:[r['sample_id'] for r in v] for k,v in sel.items()},definitions={'i_only':'intensity zero, depth+valid retained','d_only':'depth+valid zero, intensity retained','no_clean':'observed data only; no clean target'}));return rows
+    save(out/'cases.json',dict(domain=domain,rows=rows,selections={k:[r['sample_id'] for r in v] for k,v in sel.items()},definitions={'i_only':'depth+valid zero, intensity retained','d_only':'intensity zero, depth+valid retained','no_clean':'observed data only; no clean target'}));return rows
 def private_shift(root,out):
     root=Path(root);I=np.load(root/'intensity.npy',mmap_mode='r');D=np.load(root/'depth.npy',mmap_mode='r');
     def stats(ids):
