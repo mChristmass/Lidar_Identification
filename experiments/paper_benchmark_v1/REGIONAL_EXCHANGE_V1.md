@@ -30,9 +30,11 @@ stage threshold: training-only 75th percentile with per-class capped sampling ov
 drift; high agreement can still reflect shared errors. H does not use r.
 
 P applies the existing CA MLP to 4x4 regional average/max statistics, interpolates
-channel weights, then blends with global CA using an alpha projected into [0,1].
-Alpha starts at zero, so P initially reproduces B. G/H have a deliberate immediate
-gating effect, recorded in the initial snapshot. All four FRM stages are instrumented.
+channel weights, then blends with global CA using effective alpha in [0.5,1].
+P starts with alpha 0.5, which forces a substantive regional contribution.
+The first completed v1 run is retained separately: its alpha remained below 0.0003,
+so its P and PG results do not test an active regional CA. v2 defaults to a new output
+directory and records the immediate response to local CA. All four FRM stages are instrumented.
 
 Artifacts: protocol.json and source/code hashes; shared calibration checkpoints;
 per-group last.pth, midpoint.pth, history.json, result.json; diagnostics at initial,
@@ -58,6 +60,6 @@ run_regional_exchange.py, test_regional_exchange.py and scripts/run_regional_exc
 Existing paper_benchmark_v1 and cmx_initial_transfer official code/data are dependencies.
 No new packages beyond the existing CMX experiment environment are required.
 
-Run from project root: bash scripts/run_regional_exchange_v1.sh 0 12
+Run v2 from project root: bash scripts/run_regional_exchange_v2.sh 0 12
 Use tee to retain visible terminal output. comparison.json includes paired seed deltas;
 single-seed results are descriptive. Private acquisition groups are dependent.

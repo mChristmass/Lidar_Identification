@@ -179,7 +179,7 @@ def main():
     p.add_argument('--nyuv2-dir',type=Path,default=Path('data/public_semseg/nyuv2/processed'))
     p.add_argument('--private-source',type=Path,default=Path('data/paper_benchmark_runs/phase1_v1/private/tune/CMX_B1'))
     p.add_argument('--public-source',type=Path,default=Path('data/paper_benchmark_runs/phase1_v1/nyuv2_clean_medium/nyuv2/tune/CMX_B2'))
-    p.add_argument('--output-dir',type=Path,default=Path('data/paper_benchmark_runs/regional_exchange_v1'))
+    p.add_argument('--output-dir',type=Path,default=Path('data/paper_benchmark_runs/regional_exchange_v2'))
     p.add_argument('--budget-hours',type=float,default=12)
     p.add_argument('--device',default='cuda'); p.add_argument('--epochs',type=int,default=10)
     p.add_argument('--probe-epochs',type=int,default=2); p.add_argument('--lr',type=float,default=1e-5)
@@ -207,12 +207,12 @@ def main():
     files.extend(args.private_dir/'label'/f'{int(i)}.png' for i in np.concatenate((train_ids,dev_ids)))
     TrainingData(args.nyuv2_dir,'mixed',42)
     files.extend([args.nyuv2_dir/'manifests'/f'{s}.jsonl' for s in ('train','dev')])
-    protocol=dict(version=1,epochs=args.epochs,lr=args.lr,probe_epochs=args.probe_epochs,
+    protocol=dict(version=2,epochs=args.epochs,lr=args.lr,probe_epochs=args.probe_epochs,
         visual_samples=args.visual_samples,queue=queue,hashes={str(f):digest(f) for f in files},
         selection='fixed final epoch, train/dev only',public_train='50% clean + random corruption',
         probe='shared train-only calibration then frozen; features detached',
         gate='G: r_source*(c+(1-c)*(1-r_target)); H: c>=train_q75; c=1-JS/log2',
-        local_ca='4x4 pooled regions, original MLP shared, bilinear weights, projected alpha in [0,1]')
+        local_ca='4x4 pooled regions, original MLP shared, bilinear weights, P/PG effective alpha in [0.5,1]')
     # Canonicalize tuples before comparing JSON on resume.
     protocol=json.loads(json.dumps(protocol))
     path=args.output_dir/'protocol.json'

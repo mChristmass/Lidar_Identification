@@ -121,13 +121,14 @@ def snapshot(args, model, domain, folder, phase, full=False):
                     mask = ok & (quadrant == q)
                     row['quadrants'][str(q)] = dict(pixels=int(mask.sum()), fused_correct=int(((pred==y)&mask).sum()),
                         **{k: float(v[mask].mean()) if mask.any() else None for k,v in resized.items()})
-                row['alpha'] = float(m.alpha.clamp(0,1)); row['threshold'] = float(m.threshold)
+                row['alpha'] = float(.5+.5*m.alpha.clamp(0,1)) if m.arm in ('P','PG') else 0.
+                row['threshold'] = float(m.threshold)
                 records.append(row)
                 if idx in chosen:
                     for k,v in m.maps.items():
                         if k in ('ca_local','ca_effective'): continue  # Reconstruct exactly from grid/global/alpha.
                         arrays[f's{stage}_{k}'] = v.float().cpu().numpy().astype(np.float16)
-                    arrays[f's{stage}_alpha'] = np.float32(m.alpha.clamp(0,1).item())
+                    arrays[f's{stage}_alpha'] = np.float32(row['alpha'])
                     for tag,z in zip(('i','d'), m.logits):
                         arrays[f's{stage}_prob_{tag}'] = z.float().softmax(1)[0].cpu().numpy().astype(np.float16)
                     arrays[f's{stage}_quadrants'] = quadrant

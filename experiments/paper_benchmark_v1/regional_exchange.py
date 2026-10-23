@@ -48,8 +48,9 @@ class RegionalFRM(nn.Module):
             grid = weights.reshape(x.shape[0], 2, x.shape[1], gh, gw).transpose(0, 1)
             weights = F.interpolate(weights, x.shape[-2:], mode='bilinear', align_corners=False)
             local = weights.reshape(x.shape[0], 2, x.shape[1], *x.shape[-2:]).transpose(0, 1)
-        mix = self.alpha.clamp(0, 1)
-        # Project alpha after optimizer steps. Initial predictions equal the source CA.
+        # A nonzero local contribution makes P/PG an actual regional-CA test.
+        # v1 initialized this blend at zero and it stayed near zero in all seeds.
+        mix = .5 + .5*self.alpha.clamp(0, 1)
         effective = cw + mix * (local-cw) if self.arm in ('P', 'PG') else cw
         self.logits = [head(z.detach()) for head, z in zip(self.probes, (x, y))]
         c, ri, rd = evidence(*self.logits)

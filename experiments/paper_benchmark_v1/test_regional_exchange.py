@@ -12,7 +12,7 @@ from .regional_exchange import RegionalFRM, evidence
 
 
 class ExchangeTests(unittest.TestCase):
-    def test_baseline_and_regional_initialization(self):
+    def test_baseline_and_active_regional_initialization(self):
         torch.manual_seed(4)
         original=FeatureRectifyModule(8)
         x,y=torch.randn(2,8,12,16),torch.randn(2,8,12,16)
@@ -20,7 +20,10 @@ class ExchangeTests(unittest.TestCase):
         for arm in ('B','P'):
             module=RegionalFRM(copy.deepcopy(original),3,arm)
             actual=module(x,y)
-            for a,b in zip(actual,expected): torch.testing.assert_close(a,b)
+            if arm=='B':
+                for a,b in zip(actual,expected): torch.testing.assert_close(a,b)
+            else:
+                self.assertGreater(float((actual[0]-expected[0]).detach().abs().mean()),1e-5)
 
     def test_probe_loss_does_not_train_encoder(self):
         module=RegionalFRM(FeatureRectifyModule(8),3,'G')
